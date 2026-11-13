@@ -1206,7 +1206,21 @@ ${voiceActingGuide()}`;
                     // 已经有文字描述就别再传图：那份描述本身就是视觉模型的结论，传图是重复付费。
                     const attach = !mediaDesc && rawImages.length > 0 && shouldAttachMainVisionImages();
                     if (!attach) return { role: m.role, content: text };
-                    // xhscdn 有 Referer 校验，必须经 worker /xhs-media 换成可访问地址。
+                    // 首选 base64：中转/上游一般不会替用户下载 image_url，代理地址发过去
+                    // 模型也只是当字符串看一眼。base64 由 materializeXhsCardImages 提前取回存档。
+                    const base64Images: string[] = Array.isArray(noteForMedia.mediaImages)
+                        ? (noteForMedia.mediaImages as unknown[]).filter((s): s is string => typeof s === 'string' && s.startsWith('data:image/'))
+                        : [];
+                    if (base64Images.length) {
+                        return {
+                            role: m.role,
+                            content: [
+                                { type: 'text', text },
+                                ...base64Images.map((url: string) => ({ type: 'image_url', image_url: { url } })),
+                            ],
+                        };
+                    }
+                    // 兜底（base64 还没来得及取回/全失败）：发代理地址，聊胜于无。
                     const proxyBase = getProxyWorkerUrl();
                     const proxiedImages = rawImages
                         .map((url: string) => buildXhsMediaProxyUrl(proxyBase, url))
