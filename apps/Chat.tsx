@@ -108,14 +108,7 @@ import ActiveMsg2SettingsModal from '../components/chat/ActiveMsg2SettingsModal'
 import AwayMessageSettingsModal from '../components/chat/AwayMessageSettingsModal';
 import { cancelCloudAwayTasks } from '../utils/awayMessage';
 import ThinkingChainSettingsModal from '../components/chat/ThinkingChainSettingsModal';
-import OfflineSettingsModal from '../components/chat/OfflineSettingsModal';
-import OfflineInputBall from '../components/chat/OfflineInputBall';
-import OfflinePhoneBall from '../components/chat/OfflinePhoneBall';
-import OfflinePhonePanel from '../components/chat/OfflinePhonePanel';
-import { extractPhoneHolderMarker, readPhoneHolder, subscribePhoneHolder, writePhoneHolder, type PhoneHolder } from '../utils/offlineMode/phoneHolder';
 import LocationPickerModal from '../components/chat/LocationPickerModal';
-import { isOfflineEnabled, normalizeOfflineConfig } from '../utils/offlineMode/offlineSettings';
-import { buildOfflineDividerContent, buildOfflineOpeningRequest } from '../utils/offlineMode/offlinePrompts';
 import { useChatAI } from '../hooks/useChatAI';
 import { useChatAutoReply } from '../hooks/useChatAutoReply';
 import { cleanTextForTts, parseVoiceOutput } from '../utils/minimaxTts';
@@ -254,15 +247,6 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
     const [input, setInput] = useState('');
     const [isInputFocused, setIsInputFocused] = useState(false);
     const [showPanel, setShowPanel] = useState<'none' | 'actions' | 'emojis' | 'chars'>('none');
-    // 线下模式：用户输入模式（对话=自动包引号 / 旁白=不加引号），设置弹窗开关
-    const [offlineInputMode, setOfflineInputMode] = useState<'dialogue' | 'narration'>('dialogue');
-    // 悬浮球吸附锚点：底栏那一层容器，球的纵坐标跟着它的上边缘走
-    const offlineBallAnchorRef = useRef<HTMLDivElement>(null);
-    // 线下手机道具：弹窗开关。三态（自己的 / 空 / 角色的）里的 holder 目前固定「自己的」，
-    // 真正的易手判定要接主 API 的内联标记（下一步），这里先把外壳和入口跑通。
-    const [phonePanelOpen, setPhonePanelOpen] = useState(false);
-    const [phoneHolder, setPhoneHolder] = useState<PhoneHolder>('me');
-    const [offlineSettingsOpen, setOfflineSettingsOpen] = useState(false);
     const [memoryRepairOpen, setMemoryRepairOpen] = useState(false);
     const [novelReaderOpen, setNovelReaderOpen] = useState(false);
     const [fanwaiOpen, setFanwaiOpen] = useState(false);
@@ -444,52 +428,6 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
     const [showingTargetIds, setShowingTargetIds] = useState<Set<number>>(new Set());
 
     const char = characters.find(c => c.id === activeCharacterId) || characters[0];
-    // 手机在谁手里（线下道具）：切换角色时重读，主角色的回复里带 [[手机:…]] 时由后处理广播过来
-    useEffect(() => {
-        if (!char?.id) return;
-        setPhoneHolder(readPhoneHolder(char.id));
-        return subscribePhoneHolder((charId, holder) => {
-            if (charId === char.id) setPhoneHolder(holder);
-        });
-    }, [char?.id]);
-    // 线下模式：进会话就把「他手机里的内容」后台生成一次（副 API，每角色一份）。
-    // 不预取的话，玩家第一次聊到手机细节时角色只能现编；生成完写进缓存，下一轮起注入摘要。
-    const phonePrefetched = useRef('');
-    useEffect(() => {
-        if (!char?.id || (char as any).offlineConfig?.enabled !== true) return;
-        if (phonePrefetched.current === char.id) return;
-        const sub = apiConfig?.subBaseUrl && apiConfig?.subApiKey && apiConfig?.subModel
-            ? { baseUrl: apiConfig.subBaseUrl, apiKey: apiConfig.subApiKey, model: apiConfig.subModel }
-            : null;
-        if (!sub) return;
-        phonePrefetched.current = char.id;
-        void import('../utils/offlineMode/charPhoneDigest')
-            .then(({ ensureCharPhoneContent }) => ensureCharPhoneContent({
-                char, user: userProfile, subApi: sub, timeoutMs: 0,
-            }))
-            .catch((error) => console.warn('[offline-phone] 预取手机内容失败', error));
-    }, [char, userProfile, apiConfig]);
-    // 手机道具兜底解析：本地管线在 applyAssistantPostProcessing 里已经解析过一次，
-    // 但**云端 / worker 落库的回复走的是 OSContext 自己的 DB.saveMessage**，完全绕过后处理。
-    // 所以在这里从消息流里再兜一遍——不管是哪条路径写进来的，界面看到消息就一定解析得到。
-    const phoneMarkerSeen = useRef('');
-    useEffect(() => {
-        if (!char?.id) return;
-        for (let i = messages.length - 1, scanned = 0; i >= 0 && scanned < 6; i--, scanned++) {
-            const msg = messages[i];
-            if (msg.role !== 'assistant') continue;
-            const raw = typeof msg.content === 'string' ? msg.content : '';
-            if (!raw.includes('手机')) continue;
-            const msgKey = String(msg.id ?? '');
-            if (phoneMarkerSeen.current === msgKey) return;
-            const { holder } = extractPhoneHolderMarker(raw);
-            if (holder) {
-                phoneMarkerSeen.current = msgKey;
-                writePhoneHolder(char.id, holder);
-            }
-            return;
-        }
-    }, [messages, char?.id]);
     const memoryRepairRound = useMemo(() => {
         let assistantIndex = -1;
         for (let i = messages.length - 1; i >= 0; i--) {
@@ -1575,15 +1513,7 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
             }
         }
 
-        // 线下模式：用户消息统一带 offline 标记（渲染按行级解析）；
-        // 手打对话输入自动包引号 → 渲染成台词气泡；旁白输入不加引号 → 斜体旁白。
-        // 内部请求（开场旁白等 customContent）不包引号，但同样带 offline 标记。
-        const offlineOn = isOfflineEnabled(char.offlineConfig);
-        const finalText =
-            !customContent && offlineOn && offlineInputMode === 'dialogue' && type === 'text'
-                ? `"${text}"`
-                : text;
-        const msgPayload: any = { charId: char.id, role: 'user', type, content: finalText, offline: offlineOn, metadata };
+        const msgPayload: any = { charId: char.id, role: 'user', type, content: text, metadata };
         
         if (replyTarget) {
             msgPayload.replyTo = {
@@ -1860,83 +1790,6 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
         triggerAI(messages);
     };
 
-    // 开场旁白不能和「写入 offlineConfig」挤在同一个事件循环里：updateCharacter 内部是异步
-    // setState，同一 tick 触发生成时读到的还是「还没开启」的旧闭包 —— prompt 不注入线下格式块、
-    // assistant 消息也不打 offline 标记，那一次开场旁白就渲染成了普通气泡（只有切换后的第一次）。
-    // 改为置一个 charId 标志，等配置真的生效（下一轮渲染）再由下面的 effect 触发。
-    const [pendingOfflineOpening, setPendingOfflineOpening] = useState<string | null>(null);
-
-    // 触发角色开场旁白：进入线下且「开场旁白」开关开着时，由角色自己写一段场景旁白。
-    // 不往用户侧发可见消息——存一条 hidden + proactiveHint 的 user 消息当 AI 上下文
-    // （displayMessages 过滤 proactiveHint，不会显示成用户气泡），再 triggerAI 触发；
-    // assistant 回复由 applyAssistantPostProcessing 自动落库并自动带 offline:true，走旁白渲染。
-    const fireOfflineOpeningNarration = useCallback(async () => {
-        if (!char) return;
-        if (isTyping) return;
-        await DB.saveMessage({
-            charId: char.id,
-            role: 'user',
-            type: 'text',
-            content: buildOfflineOpeningRequest(char.name),
-            offline: true,
-            metadata: { proactiveHint: true, hidden: true },
-        });
-        await reloadMessages(visibleCountRef.current);
-        // 触发角色生成开场旁白（triggerAI 内部从 DB 拉完整历史，能看到刚写入的隐藏提示）
-        triggerAI(messages);
-    }, [char, messages, reloadMessages, triggerAI]);
-
-    // 线下模式开关动作（收敛到设置弹窗第一项里触发）：开/关即生效。
-    // 开启 → 插「进入分隔线」→ 刷新 → 若开场旁白开关开则角色来一段旁白；
-    // 关闭 → 插「退出分隔线」→ 输入模式重置为对话 → 刷新。
-    const handleOfflineToggle = useCallback(async (next: boolean) => {
-        if (!char) return;
-        if (next) {
-            await DB.saveMessage({
-                charId: char.id,
-                role: 'system',
-                type: 'text',
-                content: buildOfflineDividerContent('start'),
-                metadata: { offlineDivider: 'start' },
-            });
-            await reloadMessages(visibleCountRef.current);
-            if (normalizeOfflineConfig(char.offlineConfig).openingNarration) {
-                // 不在这里直接生成：此刻 char 上的 offlineConfig 还没生效，直接生成会退回普通气泡。
-                setPendingOfflineOpening(char.id);
-            }
-        } else {
-            setOfflineInputMode('dialogue');
-            await DB.saveMessage({
-                charId: char.id,
-                role: 'system',
-                type: 'text',
-                content: buildOfflineDividerContent('end'),
-                metadata: { offlineDivider: 'end' },
-            });
-            await reloadMessages(visibleCountRef.current);
-        }
-    }, [char, reloadMessages, fireOfflineOpeningNarration]);
-
-    // 等「线下已开启」这件事在 char 上真的生效，再触发开场旁白。
-    // 用语义等待（配置确实为 true），不用 setTimeout(0) 去赌 React 何时 flush。
-    useEffect(() => {
-        if (!pendingOfflineOpening) return;
-        // 切了角色 / 标志已不属于当前角色：丢弃，避免跨角色误触发
-        if (!char || char.id !== pendingOfflineOpening) {
-            setPendingOfflineOpening(null);
-            return;
-        }
-        // 配置还没生效：等下一轮 char 更新再看
-        if (!isOfflineEnabled(char.offlineConfig)) return;
-        // 等待期间用户又把「开场旁白」关掉了：不再触发
-        if (!normalizeOfflineConfig(char.offlineConfig).openingNarration) {
-            setPendingOfflineOpening(null);
-            return;
-        }
-        setPendingOfflineOpening(null);
-        void fireOfflineOpeningNarration();
-    }, [pendingOfflineOpening, char, fireOfflineOpeningNarration]);
-
     const handleReroll = async () => {
         if (isTyping || messages.length === 0) return;
         autoReply.cancel();
@@ -2070,7 +1923,6 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
             'transfer', 'archive', 'settings', 'chrome-css', 'chrome-sound', 'fine-tune',
             'meetup', 'active-msg-2', 'away-message', 'schedule', 'mcd-request', 'luckin-request',
             'html-mode-toggle', 'html-mode-settings', 'thinking-settings', 'favorites', 'collaboration',
-            'offline-toggle', 'offline-settings',
             // 独立小功能：点一下就是用了一次，跟「打开某个面板」同一性质。
             // send-emoji / select-category 这些是「挑哪一个」，不进名单。
             'poke', 'emoji-import', 'add-category', 'mcd-end', 'luckin-end',
@@ -2140,15 +1992,6 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
                 // 「展示思考」按钮 → 打开思考链设置 modal（开关 / 卡片风格 / 配色 / 追加提示词）
                 if (!char) break;
                 setShowThinkingChainModal(true);
-                break;
-            }
-            case 'offline-toggle':
-            case 'offline-settings': {
-                // 「线下模式」入口 → 一律只弹设置弹窗（开关动作收敛在弹窗第一项，
-                // 用户自己开/关才生效）。短按 / 长按行为一致，都不直接 toggle、不 toast。
-                if (!char) break;
-                setOfflineSettingsOpen(true);
-                setShowPanel('none');
                 break;
             }
             case 'image-gen': {
@@ -4397,7 +4240,7 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
     }), [aiVisibleEmojis, activeCategory]);
 
     // 发送回调刻意不做 useCallback：它缓存的是一整份 handleSendText 闭包，依赖一漏
-    // （offlineInputMode / windowedFocusMsgId / userProfile / realtimeConfig）就会读到旧值，
+    // （windowedFocusMsgId / userProfile / realtimeConfig）就会读到旧值，
     // 典型症状是「打完字再切对话/旁白，发送仍用旧模式」。内联箭头每次渲染新建、永远是最新闭包；
     // 而 ChatInputArea 的其它 props 本就每次渲染新建，memo 早已失效，去掉没有性能损失。
     const handleCharSelectCallback = useCallback((id: string) => { setActiveCharacterId(id); setShowPanel('none'); }, []);
@@ -5153,7 +4996,6 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
                             onResolveLifeRecord={handleResolveLifeRecord}
                             onRetryImageGen={retryImageGen}
                             thinkingChainOptions={thinkingChainOptions}
-                            offlineConfig={char.offlineConfig}
                         />
                         {showToolTrace && (
                             <div className={`px-3 mb-4 ${breaksWithNext ? toolTracePullClass : ''}`}>
@@ -5213,7 +5055,6 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
                                     messageSpacing={osTheme.chatMessageSpacing}
                                     showTimestamp={osTheme.chatShowTimestamp}
                                     thinkingChainOptions={thinkingChainOptions}
-                                    offlineConfig={char.offlineConfig}
                                 />
                             </div>
                         ))}
@@ -5252,7 +5093,7 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
                 )}
             </div>
 
-            <div className="relative z-40" ref={offlineBallAnchorRef}>
+            <div className="relative z-40">
                 {mcdActivated && (
                     <div className="flex items-center justify-between px-4 py-1.5 bg-yellow-50 border-b border-yellow-200 text-xs">
                         <div className="flex items-center gap-1.5 text-yellow-700 font-bold">
@@ -5348,67 +5189,12 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
                     luckinActivated={luckinActivated}
                     htmlModeEnabled={!!(char as any).htmlModeEnabled}
                     showThinkingChain={!!(char as any).showThinkingChain}
-                    offlineModeEnabled={isOfflineEnabled(char.offlineConfig)}
-                    offlineInputMode={offlineInputMode}
                     inputStyle={osTheme.chatInputStyle}
                     sendButtonStyle={osTheme.chatSendButtonStyle}
                     chromeStyle={osTheme.chatChromeStyle}
                     acnh={acnh}
                 />
             </div>
-
-            {/* 线下模式 · 输入模式悬浮球（对话 / 旁白）：吸附在底栏右上角外侧，点一下切换 */}
-            {char && isOfflineEnabled(char.offlineConfig) && (
-                <OfflineInputBall
-                    anchorRef={offlineBallAnchorRef}
-                    mode={offlineInputMode}
-                    onToggle={() => {
-                        setOfflineInputMode(offlineInputMode === 'dialogue' ? 'narration' : 'dialogue');
-                        trackEvent('切换线下输入模式');
-                    }}
-                />
-            )}
-
-            {/* 线下模式 · 手机道具：可拖动悬浮球 + 悬浮手机弹窗（弹窗打开时球淡出） */}
-            {char && isOfflineEnabled(char.offlineConfig) && (
-                <>
-                    <OfflinePhoneBall
-                        holder={phoneHolder}
-                        hidden={phonePanelOpen}
-                        onOpen={() => {
-                            // 手上是空的就打不开：手机在他手里，你看不了自己的手机
-                            if (phoneHolder === 'none') {
-                                addToast('手机不在你手边', 'info');
-                                return;
-                            }
-                            setPhonePanelOpen(true);
-                        }}
-                        onPickHolder={(next) => {
-                            // 长按手动摆位（模型漏发 [[手机:…]] 时的兜底）
-                            if (!char) return;
-                            writePhoneHolder(char.id, next);
-                            addToast(
-                                next === 'char' ? '已切到：他的手机' : next === 'none' ? '已切到：空手' : '已切到：你的手机',
-                                'info',
-                            );
-                        }}
-                    />
-                    <OfflinePhonePanel
-                        open={phonePanelOpen}
-                        holder={phoneHolder}
-                        charId={char.id}
-                        charName={char.name}
-                        userName={userProfile?.name || '你'}
-                        char={char}
-                        user={userProfile}
-                        subApi={apiConfig?.subBaseUrl && apiConfig?.subApiKey && apiConfig?.subModel
-                            ? { baseUrl: apiConfig.subBaseUrl, apiKey: apiConfig.subApiKey, model: apiConfig.subModel }
-                            : undefined}
-                        charTimeZone={resolveCharTimeZone(char)}
-                        onClose={() => setPhonePanelOpen(false)}
-                    />
-                </>
-            )}
 
             {/* 主动消息 2.0（云端 worker 定时任务）Settings Modal */}
             {char && (
@@ -5487,25 +5273,6 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
                         if (next.customCss !== undefined) patch.thinkingChainCustomCss = next.customCss;
                         if (Object.keys(patch).length) updateCharacter(char.id, patch as any);
                     }}
-                />
-            )}
-
-            {/* 线下模式设置 Modal — 入口：加号面板「线下模式」长按 */}
-            {char && (
-                <OfflineSettingsModal
-                    isOpen={offlineSettingsOpen}
-                    onClose={() => setOfflineSettingsOpen(false)}
-                    value={normalizeOfflineConfig(char.offlineConfig)}
-                    onChange={(next) => {
-                        const wasOn = isOfflineEnabled(char.offlineConfig);
-                        updateCharacter(char.id, { offlineConfig: { ...(char.offlineConfig || {}), ...next } });
-                        // 开关动作收敛在这里：开/关即插分隔线 + 触发开场旁白
-                        if (next.enabled !== undefined && next.enabled !== wasOn) {
-                            void handleOfflineToggle(next.enabled);
-                        }
-                    }}
-                    charName={char.name}
-                    userName={userProfile.name || '用户'}
                 />
             )}
 

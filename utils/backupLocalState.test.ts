@@ -51,11 +51,9 @@ const SAMPLE: Record<string, string> = {
     'nrcache_nr_vocab': '[{"src":"word","trans":"词","bookId":"b1","bookTitle":"测试书","ts":1}]',
     'nrcache_nr_skin': 'green',
     // 精确项
-    'reality_bridge_feed_v1': '[{"id":"f1","text":"信息流"}]',
     'wechat_bridge_settings_v1': '{"clientId":"dev-1","cursor":3}',
     'os_sub_api_presets': '[{"id":"p1","name":"副API","baseUrl":"https://x","apiKey":"k","model":"m"}]',
     'gamehub_stats': '{"total":10,"wins":4}',
-    'reality_bridge_rules_v1': '{"rule":1}',
     'gamehub_settings': '{"autoFillNpc":true}',
     'os_fanwai_form_v1': '{"style":"古风","pov":"first"}',
     'os_last_seen_date': '2026-09-26',
@@ -151,15 +149,9 @@ describe('backupLocalState', () => {
     it('登记表覆盖了本次修复涉及的全部自研键', () => {
         const expected = [
             'nrcache_nr_books',
-            'reality_bridge_feed_v1',
             'wechat_bridge_settings_v1',
             'os_sub_api_presets',
             'gamehub_stats',
-            'reality_bridge_settings_v1',
-            'reality_bridge_rules_v1',
-            'reality_bridge_actions_v1',
-            'reality_bridge_data_items_v1',
-            'reality_bridge_screen_chat_v1',
             'gamehub_settings',
             'os_fanwai_form_v1',
             'os_last_seen_date',

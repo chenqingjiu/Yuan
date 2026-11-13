@@ -127,8 +127,7 @@ export function WechatBridgePoller(): null {
         };
     }, [drain]);
 
-    // addToast 目前没用到（消息合并走 chatGenEvents 的未读/toast 通道），
-    // 引进来只为和 RealityBridgePoller 的宿主注入形状保持一致。
+    // addToast 目前没用到（消息合并走 chatGenEvents 的未读/toast 通道）。
     void addToast;
     return null;
 }

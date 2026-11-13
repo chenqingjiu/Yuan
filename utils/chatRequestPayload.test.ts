@@ -8,7 +8,7 @@ import { SAR_MODULE_CATALOG } from './vrWorld/sarModuleShop';
 import { ChatPrompts } from './chatPrompts';
 
 // 即时对话（这一轮交给用户自己的 amsg worker 生成）那份 prompt 里，凡是 worker 到点
-// 会自己补一遍的时效段，前端就不再烤进去：当前时间块、【真实世界感知系统】（节日 /
+// 会自己补一遍的时效段，前端就不再烤进去：当前时间块、【现实世界信息】（节日 /
 // 天气 / 热搜）、MCP 工具说明。两边都写的话，模型在同一份 prompt 里看到两个钟、两份
 // 互不重叠的热搜（前端快照版 + worker 现拉版）、两套工具名。
 //
@@ -112,8 +112,8 @@ describe('timelyByWorker —— 时效段交给 worker，前端这份不重复�
         const systemPrompt = String(payload.fullMessages[0]?.content || '');
         const topRule = '**TOP 1｜ChatApp 格式（本节最高优先级）**';
         expect(systemPrompt).toContain(topRule);
-        expect(systemPrompt.indexOf(topRule)).toBeLessThan(systemPrompt.indexOf('1. **沉浸感**'));
-        expect(systemPrompt).toContain('你是发消息的真实存在，以自然短句、短气泡为主；一个气泡一行，气泡间直接另起一行（实际换行，不要输出“\\n”字样）。');
+        expect(systemPrompt.indexOf(topRule)).toBeLessThan(systemPrompt.indexOf('1. **表达方式**'));
+        expect(systemPrompt).toContain('你正在通过聊天界面发送消息，以自然短句、短气泡为主；一个气泡一行，气泡间直接另起一行（实际换行，不要输出“\\n”字样）。');
         expect(systemPrompt).toContain('每行渲染为一个气泡；空格和标点不会拆泡');
     });
 
@@ -121,7 +121,7 @@ describe('timelyByWorker —— 时效段交给 worker，前端这份不重复�
         const withMode = await buildChatRequestPayload({ ...baseInput(), timelyByWorker: true });
         const joined = joinMessages(withMode.fullMessages);
         expect(joined).not.toContain('### 当前时间 (Now)');
-        expect(joined).not.toContain('【真实世界感知系统】');
+        expect(joined).not.toContain('【现实世界信息');
         expect(joined).not.toContain('【今日特殊】');
         expect(joined).not.toContain('[外部工具已接入');
         expect(joined).not.toContain('[MCP 工具 ON');
@@ -136,7 +136,7 @@ describe('timelyByWorker —— 时效段交给 worker，前端这份不重复�
         const joined = joinMessages(normal.fullMessages);
         expect(joined).toContain('### 当前时间 (Now)');
         // 上一条的 not.toContain 要有意义，得先确认默认构建里这几段真的在
-        expect(joined).toContain('【真实世界感知系统】');
+        expect(joined).toContain('【现实世界信息');
         expect(joined).toContain('[外部工具已接入');
         expect(joined).toContain('[MCP 工具 ON');
         expect(normal.flags.mcpChatActive).toBe(true);

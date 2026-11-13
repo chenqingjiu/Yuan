@@ -15,7 +15,7 @@ import { protectPendingChatTurn } from './storyTheaterTimeline';
  * 等价。新增 caller（runProactive）只是补齐了过去缺的字段。
  */
 
-import type { CharacterProfile, UserProfile, GroupProfile, Emoji, EmojiCategory, Message, RealtimeConfig, TranslationConfig, VisionApiConfig, VideoApiConfig, OfflineConfig } from '../types';
+import type { CharacterProfile, UserProfile, GroupProfile, Emoji, EmojiCategory, Message, RealtimeConfig, TranslationConfig, VisionApiConfig, VideoApiConfig } from '../types';
 import { ChatPrompts, detectChatModeTransition } from './chatPrompts';
 import { ContextBuilder } from './context';
 import { injectMemoryPalace } from './memoryPalace/pipeline';
@@ -26,8 +26,6 @@ import { renderConversationEngagementGuidance } from './memoryPalace/conversatio
 import type { ConversationEngagementAnalysis } from './memoryPalace/conversationEngagement';
 import type { DeepEngagementAnalysis } from './memoryPalace/deepEngagement';
 import { normalizeTranslationLangLabel } from './translationLang';
-import { buildOfflineMainBlock, buildOfflinePhoneHolderNote, withOfflineTailReminder } from './offlineMode/offlinePrompts';
-import { readPhoneHolder } from './offlineMode/phoneHolder';
 import { buildChatOutputStylePrompt } from './chatOutputStylePrompt';
 import { buildMcdMiniAppContextBlock } from './mcdToolBridge';
 import type { McdMiniAppSnapshot } from './mcdToolBridge';
@@ -106,8 +104,6 @@ export interface BuildChatPayloadInput {
     translationConfig?: TranslationConfig | { enabled: boolean; sourceLang: string; targetLang: string };
     htmlMode?: { enabled: boolean; customPrompt?: string };
     thinkingChain?: { enabled: boolean; customPrompt?: string };
-    /** 私聊线下模式配置：开启时注入 buildOfflineMainBlock（旁白/台词格式 + 文风 + 人称 + 篇幅） */
-    offlineConfig?: OfflineConfig;
     /** 副 API：线下模式「他手机里的内容」没生成过时默认生成一次（每角色一份，失败不影响聊天） */
     subApiConfig?: { baseUrl?: string; apiKey?: string; model?: string } | null;
     /** 可选识图 API：开启后先把图片持久化转写为 [图片：描述]，主模型只接收文字。 */
@@ -391,8 +387,6 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
     // 但主 API 的 historyMsgsForPrompt 来自完整 DB，仍然会看到它们。模式切换必须以 API
     // 真正要发送的历史为准，否则模型会收到特殊模式正文，却收不到「切回聊天格式」的提示。
     const returningFromMode = detectChatModeTransition(chronologicalHistory);
-    // 线下模式开关：历史构建和 system prompt 都要用到，提到最前面算一次。
-    const offlineActive = !!input.offlineConfig?.enabled;
     // 在公共上下文管线之前准备实际历史，世界书触发和摆放共用这一份消息。
     const { apiMessages } = ChatPrompts.buildMessageHistory(
         historyMsgsForPrompt,
@@ -401,7 +395,7 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
         userProfile,
         emojis,
         undefined,
-        { useVisionDescriptions, contextHighWaterMark, protectPendingChatTurn: true, offlineMode: offlineActive },
+        { useVisionDescriptions, contextHighWaterMark, protectPendingChatTurn: true },
     );
 
     // ── 8. 剥离历史里旧的双语标签（stripImages 时先压平 image_url → 纯文本占位） ──
@@ -424,8 +418,6 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
             // 角色「允许主动发照片」开关：由 Chat 主链路从 apiConfig 透传，注入主动发图引导
             imageGenProactiveEnabled: input.imageGenProactiveEnabled === true,
             appRules: input.appPrompt?.rules,
-            // 线下模式接管 ChatApp 规则开头（手机聊天 / 不要输出行为 → 面对面 + 旁白格式）
-            offlineMode: offlineActive,
         },
     ));
     input.signal?.throwIfAborted();
@@ -442,39 +434,17 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
     // Output protocol block (bilingual / HTML card / thinking chain).
     // Upstream extracted these three into buildChatOutputStylePrompt so scheduled
     // proactive messages reuse the exact same protocol.
-    // Local delta: offline mode is also an output format, so it must win. When offline
-    // is on we do not pass translationConfig/htmlMode, otherwise the formats fight.
-    // （offlineActive 在上面 buildMessageHistory 之前就算好了，这里直接复用。）
     const { prompt: outputStylePrompt, bilingualActive, htmlActive, thinkingActive } = buildChatOutputStylePrompt({
         charName: char.name,
         userName: userProfile?.name,
         ...(!input.appPrompt ? {
-            translationConfig: offlineActive ? undefined : translationConfig,
-            htmlMode: offlineActive ? undefined : htmlMode,
-            // 思考链与 SAR 信封同样是一种「外层格式」：思考链会让模型先写一段再进正文、
-            // 格式容易漂移；SAR 信封要求最外层是 <SAR_MODULE_OUTPUT>，行首不再可能是引号，
-            // 台词会被 100% 判成旁白。线下模式开着时两者一并让位。
-            thinkingChain: offlineActive ? { enabled: false } : thinkingChain,
-            sarEnvelopeActive: offlineActive ? false : sarEnvelopeActive,
+            translationConfig,
+            htmlMode,
+            thinkingChain,
+            sarEnvelopeActive,
         } : {}),
     });
     systemPrompt += outputStylePrompt;
-    // The offline block still needs the raw bilingual intent: its own format prompt is
-    // suppressed above, but the line-format hint must still reach the model.
-    const sourceLang = normalizeTranslationLangLabel(translationConfig?.sourceLang);
-    const targetLang = normalizeTranslationLangLabel(translationConfig?.targetLang);
-
-    // ── 6.5 线下模式：格式块（覆盖「聊天对话」类指令，放在思考链之后、历史之前） ──
-    if (offlineActive) {
-        const userName = (userProfile?.name && userProfile.name.trim()) || '用户';
-        systemPrompt += `\n\n${buildOfflineMainBlock({
-            char, userName, cfg: input.offlineConfig,
-            // 用「用户是否开了双语」的原始判断：标准双语指令虽被让位，但离线块内的双语兼容写法仍要注入
-            bilingual: (translationConfig?.enabled && sourceLang && targetLang)
-                ? { active: true, sourceLang, targetLang }
-                : undefined,
-        })}`;
-    }
 
     const messagesWithWorldbookDepth = parts.history;
 
@@ -562,8 +532,7 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
     // 思考链/点单块拼在钢印之后、模型开口前最后读到的是格式说明书的问题。
     if (input.appPrompt) volatileTail += input.appPrompt.scene;
     volatileTail += parts.recencyTail;
-    // 线下模式开着时 SAR（查手机）模块整块让位：它自带 XML 信封，会把行首引号的台词格式冲掉。
-    if (sarModuleBlock && !offlineActive) volatileTail += sarModuleBlock;
+    if (sarModuleBlock) volatileTail += sarModuleBlock;
 
     // 结构：[稳定 system] + [历史消息] + [易变状态 system] (+ 末尾 reminder)。
     // 稳定前缀不再包含分钟级时间戳等易变内容 → 支持前缀缓存的中转能跨轮命中；
@@ -587,14 +556,14 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
     if (mcpChatActive && !input.timelyByWorker) {
         fullMessages.push({ role: 'system', content: MCP_TAIL_REMINDER });
     }
-    if (sarModuleBlock && !input.appPrompt && !offlineActive) {
+    if (sarModuleBlock && !input.appPrompt) {
         fullMessages.push({
             role: 'system',
             content: '[SAR MODULE REMINDER: 模块是角色在彼方能感知、能记得的外来装置，不是幕后文风要求；CHAR_TRUE 必须包含角色对异常的当下反应，不能若无其事。生效时最终只输出 <SAR_MODULE_OUTPUT> 容器。聊天的 CHAR_TRUE / CHAR_SURFACE 必须逐气泡对齐；纯括号动作原位逐字复制，禁止删泡、合并或新增气泡。内置翻译要在两字段中分别保留完整翻译标签；语音要保留 <语音>/<字幕> 结构并同步改写口播与字幕；“日文（中文翻译）”一类同泡格式不可把括号译文误判成动作。真实语义写 CHAR_TRUE，临时外显写 CHAR_SURFACE，用户外显写 USER_SURFACE，不得把外显当作内心。]',
         });
     }
 
-    if (sarModulePlan?.user?.phase === 'active' && !offlineActive) {
+    if (sarModulePlan?.user?.phase === 'active') {
         fullMessages.push({ role: 'system', content: buildSARUserSurfaceRequest(
             selectSARUserSurfaceTargets(input.historyMsgs, char.id, sarModulePlan.user),
         ) });
@@ -634,51 +603,6 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
         if(visits)fullMessages.push({role:'system',content:visits});
         input.signal?.throwIfAborted();
     }
-    // 线下模式的末尾 Reminder：必须是模型开口前读到的最后一条 system。
-    // 线下主块拼在第一条 system（历史之前），对模型的约束力弱于贴着生成点的易变尾段，
-    // 所以格式要在这里再钉一次，否则会被「少铺垫」「只写你自己的话」这类尾部提示压过去。
-    // 手机此刻在谁手里。现场有两台手机，所以文案里一律用名字指代两台手机各自的归属，
-    // 不用「你/他」——单一人称在两台手机之间会指反（模型以为拿的是自己的，界面显示的是另一台）。
-    const uname = userProfile?.name || '用户';
-    const phoneHolder = offlineActive ? readPhoneHolder(char.id) : 'me';
-    let phoneHolderNote: string | undefined;
-    if (offlineActive) {
-        phoneHolderNote = buildOfflinePhoneHolderNote(phoneHolder, char.name, uname);
-        // 他自己手机里的内容：默认全看过（那是他本人的记忆，不做 App 级"看没看过"的记录）。
-        // 没生成过就默认生成一次（每角色一份、只等 15s），生成不出来时明确要求"别编"。
-        try {
-            const { ensureCharPhoneContent } = await import('./offlineMode/charPhoneDigest');
-            const charDigest = await ensureCharPhoneContent({
-                char,
-                user: userProfile,
-                subApi: input.subApiConfig,
-                timeoutMs: 15000,
-            });
-            phoneHolderNote = charDigest
-                ? `${phoneHolderNote}\n${charDigest}`
-                : `${phoneHolderNote}\n【${char.name}的手机内容这一轮还没展开：不要编具体内容（哪条聊天、哪张照片、多少钱）。被问到时用"手机拿过来我看下""等我翻翻"这类反应带过去，下一轮再说。】`;
-        } catch (error) {
-            console.error('[offline-phone] 注入角色自己手机内容失败', error);
-        }
-        // 对方手机在他手里 = 默认他已经全看过（§5.26 A）：授权范围内的内容要成为他的已知事实，
-        // 否则会出现「他提起相册里的照片、自己却不知道」的矛盾；没授权的项不注入，对应地看不到。
-        if (phoneHolder === 'none') {
-            try {
-                const { buildUserPhoneDigest } = await import('./offlineMode/userPhoneDigest');
-                const digest = await buildUserPhoneDigest(char.id, char.name, uname);
-                if (digest) phoneHolderNote = `${phoneHolderNote}\n${digest}`;
-            } catch (error) {
-                console.error('[offline-phone] 注入"翻过对方手机"失败', error);
-            }
-            input.signal?.throwIfAborted();
-        }
-    }
-    fullMessages = withOfflineTailReminder(
-        fullMessages,
-        offlineActive,
-        phoneHolderNote,
-        offlineActive ? { charName: char.name, userName: uname } : undefined,
-    );
     // Dev 开关：多条 system 合并成开头一条，A/B 对照中转适配层对多 system 的计量行为。
     let finalMessages = fullMessages;
     if (isSystemMessageMergeEnabled()) {

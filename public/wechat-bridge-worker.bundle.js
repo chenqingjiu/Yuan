@@ -237,7 +237,7 @@ async function sendText(baseUrl, botToken, toUserId, contextToken, text) {
   }
 }
 
-// node_modules/.pnpm/@rei-standard+amsg-server@3_f2a08373d30841ce79e2e19c7fb88ed9/node_modules/@rei-standard/amsg-server/dist/chunk-WFKLHUUE.mjs
+// node_modules/.pnpm/@rei-standard+amsg-server@3.2.0-next.2_@neondatabase+serverless@1.1.0_pg@8.22.0/node_modules/@rei-standard/amsg-server/dist/chunk-WFKLHUUE.mjs
 var DAY_MS = 24 * 60 * 60 * 1e3;
 var D1_MAX_ROW_BYTES = 2e6;
 var STORAGE_HEX_OVERHEAD_BYTES = 66;

@@ -41,7 +41,6 @@ export enum AppID {
   WorldHome = 'world_home', // 家园 — 同世界观多角色共同生活的大世界（观测驱动演绎，每角色独立 LLM 调用 + NPC 世界引擎）
   Fanwai = 'fanwai', // 拾光 — 番外收藏：私聊生成的小说式番外，收藏后可转发给角色（写入记忆+注入私聊）
   GameHub = 'game_hub', // 游戏大厅 — 小游戏合集（首个内置「你说我猜」综艺局）
-  RealityBridge = 'reality_bridge', // 现实桥 — iPhone 快捷指令 ↔ 云端 ↔ 角色聊天的双向数据桥
   Weread = 'weread', // 微信读书 — 真实书架/笔记/正文（个人自用）+ 角色感知开关
 }
 
@@ -789,6 +788,7 @@ export interface DateStyleConfig {
  * offlinePrompts 构建提示词时读取，改动即时生效于后续生成。
  * - 开关状态同样记在角色上：A 角色在线下，切去 B 聊几句再回来，A 仍在线下。
  * - 缺省值见 offlineMode/offlineSettings.ts 的 DEFAULT_OFFLINE_CONFIG。
+ * - 线下模式已下线；此类型仅为渲染历史旁白消息保留。
  */
 export interface OfflineConfig {
   /** 线下模式总开关 */
@@ -3236,8 +3236,6 @@ export interface CharacterProfile {
   dateExtraPresets?: Array<{ id: string; name: string; content: string }>; // 当前角色的见面自定义补充预设
   /** 观测协议 OBSERVE：开启后每条回复注入「时间/地点/状态/细节」结构化观测，渲染成全息 HUD（样式/字段可自定义） */
   dateObserve?: DateObserveConfig;
-  /** 私聊线下模式配置（开关/文风/字数/人称/旁白样式），按角色记忆，见 offlineMode/offlineSettings.ts */
-  offlineConfig?: OfflineConfig;
   /** 相伴纪念日（YYYY-MM-DD，可空）：用于桌面槽位与特殊日期「相伴 N 天」计算 */
   relationshipStartDate?: string;
   /** 来信配置（开关/调性/注入力度），见 utils/letter/*。 */

@@ -55,8 +55,6 @@ import { normalizeAssistantActionFormatting } from './assistantActionFormat';
 import { markAmsgStateDirty } from './amsgStateSync';
 import { announceScheduleChanges, applyAssistantScheduleChanges } from './scheduleChange';
 import { isBlobRef } from './blobRef';
-import { isOfflineEnabled } from './offlineMode/offlineSettings';
-import { extractPhoneHolderMarker, stripPhoneHolderMarker, writePhoneHolder } from './offlineMode/phoneHolder';
 import { consumeSARChatSurfaceChunk, type SARModuleSurfaceMeta } from './vrWorld/sarModuleRuntime';
 import { stripLeakedSourceTags } from './sanitize';
 import {consumeFriendFeedMainReply} from './friendFeedMain';
@@ -645,26 +643,9 @@ export async function applyAssistantPostProcessing(
     // 统一落库入口：ctx.messageTimestamp（若有）盖到每条消息上，保证同一轮拆出的
     // 正文 / 表情 / 卡片 / 系统提示时间戳一致；没传则维持 DB.saveMessage 默认（写库当刻）。
     // 全函数落库一律走这里，别直接调 DB.saveMessage——漏一处就会出现气泡时间戳互相打架。
-    // 线下模式下保存的 assistant 文本消息统一打上 offline 标记，前端据此走「旁白斜体居中 + 台词气泡」的离线渲染。
-    // 落库实现取上游的 replyRun 通道（即时对话/定时任务可注入自己的 saveMessage），本地只加 offline 标记。
-    const offlineModeOn = isOfflineEnabled(char.offlineConfig);
-    // 手机道具：这一轮如果发生了易手，模型会带一条 [[手机:…]] 标记。
-    // 状态在这里落（写 localStorage + 广播给界面），标记本身后面落库时剥掉、不进聊天流。
-    // 只在真有标记时才写：没标记 = 没易手，不能拿默认值覆盖当前状态。
-    if (offlineModeOn) {
-        const phoneMarker = extractPhoneHolderMarker(rawAiContent);
-        if (phoneMarker.holder) writePhoneHolder(char.id, phoneMarker.holder);
-    }
     const persistMessage: typeof DB.saveMessage = (msg) => {
-        // 兜底再剥一次：有些分支会把原始段落重新拼进内容里
-        const cleaned = offlineModeOn && typeof msg.content === 'string'
-            ? { ...msg, content: stripPhoneHolderMarker(msg.content) }
-            : msg;
-        const stamped = messageTimestamp != null ? { ...cleaned, timestamp: messageTimestamp } : cleaned;
+        const stamped = messageTimestamp != null ? { ...msg, timestamp: messageTimestamp } : msg;
         const save = ctx.replyRun?.saveMessage ?? DB.saveMessage;
-        if (offlineModeOn && msg.role === 'assistant' && msg.type === 'text') {
-            return save({ ...stamped, offline: true });
-        }
         return save(stamped);
     };
     const {

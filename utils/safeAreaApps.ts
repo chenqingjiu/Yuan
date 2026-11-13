@@ -46,7 +46,6 @@ export const SELF_SAFE_AREA_APPS: ReadonlySet<AppID> = new Set<AppID>([
     AppID.CharCreatorDev,
     AppID.SpecialMoments,
     AppID.Fanwai,
-    AppID.RealityBridge,
     AppID.Weread,
 ]);
 

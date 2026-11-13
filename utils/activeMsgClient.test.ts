@@ -1012,8 +1012,7 @@ describe('buildFirePack 的时区参照系与模板（①）', () => {
     // 第 12 个位置参数是 promptOptions（见 chatPrompts.buildSystemPrompt 签名）。
     // 这个开关一次性关掉时间块 / 真实世界感知 / 日程 / 音乐 / 刚打完电话 / 群聊相对时间 /
     // 生活记录代记 / [schedule_message] 教学，清单见 ChatPrompts.PromptBuildOptions。
-    // offlineMode 一并带上：线下角色打包时也要接管 ChatApp 规则（未开时是 false）
-    expect(systemPromptSpy.mock.calls[0][11]).toEqual({ forFirePack: true, offlineMode: false });
+    expect(systemPromptSpy.mock.calls[0][11]).toEqual({ forFirePack: true });
   });
 
   it('当前时间槽位保留：worker 到点现算填入（1.0 提示块的「现在是」也是槽位）', async () => {
@@ -1156,7 +1155,7 @@ describe('buildFirePack 的时区参照系与模板（①）', () => {
   it('实时世界留槽位，且模板里没有烤死的天气热搜', async () => {
     const out = await pack(baseChar());
     expect(out.template).toContain(AMSG_SLOT_REALTIME_WORLD);
-    expect(out.template).not.toContain('真实世界感知系统');
+    expect(out.template).not.toContain('现实世界信息');
     expect(out.template).not.toContain('实时天气');
   });
 

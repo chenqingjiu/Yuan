@@ -63,12 +63,6 @@ export const LOCAL_STATE_ENTRIES: LocalStateEntry[] = [
         content: true,
     },
     {
-        // 权威定义：utils/realityBridge/settings.ts:18 `KEY_FEED`
-        key: 'reality_bridge_feed_v1',
-        label: '现实桥信息流记录',
-        content: true,
-    },
-    {
         // 权威定义：utils/wechatBridge/settings.ts:10
         // 内含本机设备身份 clientId —— 丢了要重新粘贴同一枚才能共用同一片云端空间
         key: 'wechat_bridge_settings_v1',
@@ -171,32 +165,6 @@ export const LOCAL_STATE_ENTRIES: LocalStateEntry[] = [
     },
 
     // ─────────── 配置类（丢失需重设） ───────────
-    {
-        // 权威定义：utils/realityBridge/settings.ts:14-17,19
-        key: 'reality_bridge_settings_v1',
-        label: '现实桥设置',
-        content: false,
-    },
-    {
-        key: 'reality_bridge_rules_v1',
-        label: '现实桥规则',
-        content: false,
-    },
-    {
-        key: 'reality_bridge_actions_v1',
-        label: '现实桥快捷动作',
-        content: false,
-    },
-    {
-        key: 'reality_bridge_data_items_v1',
-        label: '现实桥数据项',
-        content: false,
-    },
-    {
-        key: 'reality_bridge_screen_chat_v1',
-        label: '现实桥屏幕聊天设置',
-        content: false,
-    },
     {
         // 权威定义：utils/games/gameStore.ts:55
         key: 'gamehub_settings',

@@ -80,7 +80,7 @@ interface Env {
   WX_POLL_SHARD?: string;
 }
 
-/* 最小 D1 类型声明（与 reality-bridge / amsg 同风格，不引 workers-types） */
+/* 最小 D1 类型声明（与 amsg 同风格，不引 workers-types） */
 interface D1Database {
   prepare(query: string): D1PreparedStatement;
 }

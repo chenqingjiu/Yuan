@@ -104,3 +104,14 @@ export const detectOfflineFormatBreak = (raw: string, segs: OfflineSegment[]): s
     if (hasQuestion) return '出现问句却完全没有引号：模型大概率没给台词加引号';
     return null;
 };
+
+/**
+ * 历史消息渲染专用：把时间写成「夜里 03:12」。
+ * 线下模式已下线，这里只为让旧消息里的时间锚点还能正常显示。
+ */
+export const describeOfflineClock = (date: Date = new Date()): string => {
+    const h = date.getHours();
+    const period = h < 5 ? '凌晨' : h < 8 ? '清晨' : h < 11 ? '上午' : h < 13 ? '中午'
+        : h < 17 ? '下午' : h < 19 ? '傍晚' : h < 23 ? '夜里' : '深夜';
+    return `${period} ${h.toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+};

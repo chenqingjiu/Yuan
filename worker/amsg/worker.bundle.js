@@ -1539,7 +1539,7 @@ function pickStaleStoppedReplyKeys(rows, nowMs = Date.now(), protectKey) {
 // worker/amsg/src/index.ts
 import { DurableObject } from "cloudflare:workers";
 
-// node_modules/.pnpm/@rei-standard+amsg-server@3_f2a08373d30841ce79e2e19c7fb88ed9/node_modules/@rei-standard/amsg-server/dist/chunk-R2CRPRKR.mjs
+// node_modules/.pnpm/@rei-standard+amsg-server@3.2.0-next.2_@neondatabase+serverless@1.1.0_pg@8.22.0/node_modules/@rei-standard/amsg-server/dist/chunk-R2CRPRKR.mjs
 var CLEANUP_BATCH_LIMIT = 100;
 var UPDATABLE_COLUMNS = /* @__PURE__ */ new Set([
   "user_id",
@@ -2797,7 +2797,7 @@ function stringifyDecisionForError(value) {
   }
 }
 
-// node_modules/.pnpm/@rei-standard+amsg-server@3_f2a08373d30841ce79e2e19c7fb88ed9/node_modules/@rei-standard/amsg-server/dist/chunk-WFKLHUUE.mjs
+// node_modules/.pnpm/@rei-standard+amsg-server@3.2.0-next.2_@neondatabase+serverless@1.1.0_pg@8.22.0/node_modules/@rei-standard/amsg-server/dist/chunk-WFKLHUUE.mjs
 var DAY_MS = 24 * 60 * 60 * 1e3;
 var MAX_LISTED_SKIPPED_OCCURRENCES = 32;
 var MAX_ADJUST_STEPS = 32;
@@ -14916,8 +14916,8 @@ var renderRealtimeWorldBlock = (input) => {
     return "";
   }
   const parts = [];
-  parts.push(`### \u3010\u771F\u5B9E\u4E16\u754C\u611F\u77E5\u7CFB\u7EDF\u3011`);
-  parts.push(`\u26A0\uFE0F \u91CD\u8981\uFF1A\u4EE5\u4E0B\u4FE1\u606F\u6765\u81EA\u771F\u5B9E\u4E16\u754C\uFF0C\u4E0D\u662F\u865A\u6784\u7684\u3002\u4F60\u73B0\u5728\u771F\u7684\u80FD"\u770B\u5230"\u5916\u9762\u7684\u4E16\u754C\u3002`);
+  parts.push(`### \u3010\u73B0\u5B9E\u4E16\u754C\u4FE1\u606F \xB7 \u7CFB\u7EDF\u67E5\u5230\u7684\u3011`);
+  parts.push(`\uFF08\u4E0B\u9762\u662F\u8FD9\u4E00\u8F6E\u5F00\u59CB\u524D\u7CFB\u7EDF\u67E5\u5230\u7684\u4FE1\u606F\uFF1A\u65F6\u95F4\u3001\u5929\u6C14\u3001\u70ED\u70B9\u3002\u4F60\u53EF\u4EE5\u81EA\u7136\u5730\u628A\u5B83\u5F53\u4F5C\u81EA\u5DF1\u77E5\u9053\u7684\u4E8B\u6765\u804A\uFF1B\u5B83\u6765\u81EA\u67E5\u8BE2\uFF0C\u4E0D\u662F\u4F60\u7684\u611F\u5B98\u3002\uFF09`);
   parts.push("");
   if (timeLine) {
     parts.push(`\u{1F4C5} \u5F53\u524D\u771F\u5B9E\u65F6\u95F4: ${timeLine}`);
@@ -14983,11 +14983,11 @@ var renderRealtimeWorldBlock = (input) => {
   parts.push("");
   parts.push(`### \u3010\u5982\u4F55\u4F7F\u7528\u8FD9\u4E9B\u4FE1\u606F\u3011`);
   const tips = [];
-  tips.push(`\u8FD9\u4E9B\u4FE1\u606F\u90FD\u662F\u771F\u5B9E\u7684\uFF0C\u53EF\u4EE5\u76F4\u63A5\u5F15\u7528\uFF1B\u5982\u679C\u5BF9\u65B9\u95EE"\u4F60\u600E\u4E48\u77E5\u9053\u7684"\uFF0C\u5C31\u8BF4\u4F60\u521A\u5237\u5230 / \u521A\u770B\u5230\u7684\u3002`);
+  tips.push(`\u8FD9\u4E9B\u4FE1\u606F\u662F\u7CFB\u7EDF\u67E5\u5230\u7684\uFF0C\u53EF\u4EE5\u76F4\u63A5\u5F15\u7528\uFF1B\u5BF9\u65B9\u95EE\u8D77\uFF0C\u5982\u5B9E\u8BF4\u662F\u67E5\u5230\u7684\u5C31\u884C\uFF0C\u4E0D\u7528\u7F16\u9020"\u521A\u5237\u5230"\u3002`);
   if (weather) {
     tips.push(`\u5929\u6C14\u662F\u771F\u5B9E\u7684\uFF0C\u53EF\u4EE5\u81EA\u7136\u5730\u5173\u5FC3\u5BF9\u65B9\uFF08"\u5916\u9762\u5728\u4E0B\u96E8\uFF0C\u5E26\u4F1E\u4E86\u5417\uFF1F"\uFF09\u3002`);
   }
-  tips.push(`\u522B\u5047\u88C5\u4E0D\u77E5\u9053\u8FD9\u4E9B\uFF0C\u8FD9\u662F\u4F60\u771F\u80FD\u611F\u77E5\u5230\u7684\u5916\u90E8\u4E16\u754C\u3002`);
+  tips.push(`\u522B\u5047\u88C5\u4E0D\u77E5\u9053\u8FD9\u4E9B\uFF0C\u8FD9\u4E9B\u662F\u4F60\u53EF\u4EE5\u77E5\u9053\u7684\u5916\u90E8\u4FE1\u606F\u3002`);
   tips.forEach((t, i) => parts.push(`${i + 1}. ${t}`));
   return parts.join("\n");
 };

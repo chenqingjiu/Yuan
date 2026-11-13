@@ -15,7 +15,6 @@ import StatusBar from './os/StatusBar';
 import { SARModuleMonitor } from './sar/SARModuleMonitor';
 import Launcher from '../apps/Launcher';
 import CompanionLockChrome from './os/CompanionLockChrome';
-import { RealityBridgePoller } from './reality-bridge/global-poller';
 import { WechatBridgePoller } from './wechat-bridge/global-poller';
 import { loadCompanionFrameStyle } from './os/companionFrameStyles';
 import { createPreloadableLazy, type PreloadableLazy } from './os/preloadableLazy';
@@ -73,7 +72,6 @@ const VRWorldApp = lazyApp(() => import('../apps/VRWorldApp'));
 const WorldHomeApp = lazyApp(() => import('../apps/WorldHomeApp'));
 const CharCreatorDevApp = lazyApp(() => import('../apps/CharCreatorDevApp'));
 const SpecialMomentsApp = lazyApp(() => import('./ValentineEvent').then(m => ({ default: m.SpecialMomentsApp })));
-const RealityBridgeApp = lazyApp(() => import('../apps/RealityBridgeApp'));
 const WeReadApp = lazyApp(() => import('../apps/WeReadApp'));
 
 // 仅供「桌面稳定后的空闲串行预热」。严格 await 前一个再取下一个，且任何用户操作都会停止队列。
@@ -84,7 +82,7 @@ const APP_IDLE_PRELOAD_ORDER: PreloadableLazy[] = [
   StudyApp, GameApp, NovelApp, BankApp, WorldbookApp, MemoryPalaceApp, HandbookApp,
   VRWorldApp, WorldHomeApp, LifeSimApp, SongwritingApp, GuidebookApp, FAQApp, HotNewsApp,
   XhsStockApp, XhsFreeRoamApp, BrowserApp, VoiceDesignerApp, ThemeMaker, QQBridge,
-  SpecialMomentsApp, CharCreatorDevApp, RealityBridgeApp, WeReadApp,
+  SpecialMomentsApp, CharCreatorDevApp, WeReadApp,
 ];
 
 const IDLE_PRELOAD_START_MS = 600;
@@ -107,7 +105,7 @@ const APP_BY_ID: Partial<Record<AppID, PreloadableLazy>> = {
   [AppID.Guidebook]: GuidebookApp, [AppID.LifeSim]: LifeSimApp, [AppID.MemoryPalace]: MemoryPalaceApp,
   [AppID.Handbook]: HandbookApp, [AppID.QQBridge]: QQBridge, [AppID.HotNews]: HotNewsApp,
   [AppID.VRWorld]: VRWorldApp, [AppID.CharCreatorDev]: CharCreatorDevApp, [AppID.SpecialMoments]: SpecialMomentsApp,
-  [AppID.WorldHome]: WorldHomeApp, [AppID.RealityBridge]: RealityBridgeApp, [AppID.Weread]: WeReadApp,
+  [AppID.WorldHome]: WorldHomeApp, [AppID.Weread]: WeReadApp,
 };
 // AppIcon 的 pointerdown 只预取用户正在点的 App；失败时由 preloadableLazy 清缓存，点击可正常重试。
 setAppPayloadWarmer((id: AppID) => APP_BY_ID[id]?.preload());
@@ -1063,7 +1061,6 @@ const PhoneShell: React.FC = () => {
       case AppID.VRWorld: return <VRWorldApp />;
       case AppID.WorldHome: return <WorldHomeApp />;
       case AppID.CharCreatorDev: return <CharCreatorDevApp />;
-      case AppID.RealityBridge: return <RealityBridgeApp />;
       case AppID.Weread: return <WeReadApp />;
       case AppID.Launcher:
       default: return <Launcher />;
@@ -1152,8 +1149,6 @@ const PhoneShell: React.FC = () => {
               错误指示器、系统调试终端与开关无关、始终在。 */}
           <StatusBar />
 
-          {/* 现实桥全局轮询器（隐形，返回 null；配置 workerUrl 后 App 存活期间拉取待合并事件进角色会话） */}
-          <RealityBridgePoller />
           {/* 微信桥全局轮询器（同上；把微信里的一来一回幂等合并进角色主时间线，没配置时零开销） */}
           <WechatBridgePoller />
           

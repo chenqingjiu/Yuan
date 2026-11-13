@@ -56,7 +56,6 @@ const PAYLOAD: Record<string, unknown> = {
         nrcache_nr_progress: '{"b1":42}',
         os_sub_api_presets: '[{"id":"p1","name":"副API"}]',
         wechat_bridge_settings_v1: '{"clientId":"dev-1"}',
-        reality_bridge_feed_v1: '[{"id":"f1"}]',
         gamehub_stats: '{"total":10}',
         os_fanwai_form_v1: '{"style":"古风"}',
         os_last_seen_date: '2026-09-26',

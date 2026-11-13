@@ -1,7 +1,7 @@
 import EmojiExportDialog from './EmojiExportDialog';
 import ChatCamera from './ChatCamera';
 import React, { useRef, useState, useEffect, useMemo } from 'react';
-import { ShareNetwork, Trash, Plus, Smiley, PaperPlaneTilt, Lightning, Money, BookOpenText, GearSix, Image, Lock, ArrowsClockwise, CalendarBlank, ForkKnife, Coffee, Code, Brain, PencilSimple, Alarm, ChatCircleDots, Sparkle, LinkSimple, Star, Briefcase, Feather, MapPin, FilmScript } from '@phosphor-icons/react';
+import { ShareNetwork, Trash, Plus, Smiley, PaperPlaneTilt, Lightning, Money, BookOpenText, GearSix, Image, Lock, ArrowsClockwise, CalendarBlank, ForkKnife, Coffee, Code, Brain, PencilSimple, Alarm, ChatCircleDots, Sparkle, LinkSimple, Star, Briefcase, Feather, MapPin } from '@phosphor-icons/react';
 import { CharacterProfile, ChatTheme, EmojiCategory, Emoji } from '../../types';
 import { PRESET_THEMES } from './ChatConstants';
 import { AcnhActionTile } from '../os/acnhIcons';
@@ -87,8 +87,6 @@ interface ChatInputAreaProps {
     showThinkingChain?: boolean;
     // 线下模式：激活态小点 + 输入模式（对话/旁白，只用于 placeholder 文案；
     // 切换按钮已经搬到 Chat 里的可拖动悬浮球 OfflineInputBall）
-    offlineModeEnabled?: boolean;
-    offlineInputMode?: 'dialogue' | 'narration';
     // Input style
     inputStyle?: 'default' | 'rounded' | 'flat' | 'wechat' | 'ios' | 'telegram' | 'discord' | 'pixel';
     sendButtonStyle?: 'circle' | 'pill' | 'minimal';
@@ -117,8 +115,6 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
     luckinActivated = false,
     htmlModeEnabled = false,
     showThinkingChain = false,
-    offlineModeEnabled = false,
-    offlineInputMode = 'dialogue',
     inputStyle = 'default',
     sendButtonStyle = 'circle',
     chromeStyle = 'soft',
@@ -762,7 +758,7 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                             autoCorrect="on"
                             autoCapitalize="sentences"
                             className={`sully-chat-textarea flex-1 min-w-0 bg-transparent px-4 py-3 ${useIOSStandaloneInputFix ? 'text-[16px]' : 'text-[15px]'} resize-none max-h-24 no-scrollbar ${isDiscordStyle ? 'text-white placeholder:text-slate-500' : isPixelStyle ? 'text-[#6a4c35] placeholder:text-[#9b8677]' : ''}`} 
-                            placeholder={offlineModeEnabled ? (offlineInputMode === 'narration' ? '写一句旁白…' : '说点什么…') : 'Message...'} 
+                            placeholder="Message..." 
                             style={{ height: 'auto' }} 
                         />
                         <button hidden={compactHome} onClick={() => setShowPanel(showPanel === 'emojis' ? 'none' : 'emojis')} className={`p-2 shrink-0 ${isDiscordStyle ? 'text-slate-400 hover:text-sky-300' : isPixelStyle ? 'text-[#8f674a] hover:text-[#a16207]' : 'text-slate-400 hover:text-primary'}`}>
@@ -1165,19 +1161,6 @@ const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                                   {htmlModeEnabled && <span className={`absolute -top-1 -right-1 w-3 h-3 rounded-full border-2 ${isDiscordStyle ? 'bg-fuchsia-400 border-slate-900' : 'bg-fuchsia-500 border-white'}`} />}
                               </div>)}
                               <span className="text-xs font-bold">{htmlModeEnabled ? 'HTML已开' : 'HTML模式'}</span>
-                            </button>
-
-                            {/* 线下模式：tap 切换，长按设置 */}
-                            <button
-                              onClick={() => onPanelAction('offline-toggle')}
-                              onContextMenu={(e) => { e.preventDefault(); onPanelAction('offline-settings'); }}
-                              className={`flex flex-col items-center gap-2 active:scale-95 transition-transform relative ${acnh ? 'text-[#725d42]' : isDiscordStyle ? 'text-slate-200' : 'text-slate-600'}`}
-                            >
-                              <div className={`sully-action-tile ${isDiscordStyle ? 'sully-action-tile-dark' : ''} relative`}>
-                                  <FilmScript className="w-6 h-6" weight="bold" />
-                                  {offlineModeEnabled && <span className={`absolute -top-1 -right-1 w-3 h-3 rounded-full border-2 ${isDiscordStyle ? 'bg-sky-400 border-slate-900' : 'bg-sky-500 border-white'}`} />}
-                              </div>
-                              <span className="text-xs font-bold">{offlineModeEnabled ? '线下已开' : '线下模式'}</span>
                             </button>
 
                             {/* 展示思考 */}

@@ -659,8 +659,8 @@ export const renderRealtimeWorldBlock = (input: RealtimeWorldRenderInput): strin
     const parts: string[] = [];
 
     // 开头强调：这是真实世界的信息
-    parts.push(`### 【真实世界感知系统】`);
-    parts.push(`⚠️ 重要：以下信息来自真实世界，不是虚构的。你现在真的能"看到"外面的世界。`);
+    parts.push(`### 【现实世界信息 · 系统查到的】`);
+    parts.push(`（下面是这一轮开始前系统查到的信息：时间、天气、热点。你可以自然地把它当作自己知道的事来聊；它来自查询，不是你的感官。）`);
     parts.push('');
 
     // 1. 时间信息。时差提示（tzAwarenessNote）统一由 ContextBuilder.buildCoreContext 注入，
@@ -745,11 +745,11 @@ export const renderRealtimeWorldBlock = (input: RealtimeWorldRenderInput): strin
     parts.push('');
     parts.push(`### 【如何使用这些信息】`);
     const tips: string[] = [];
-    tips.push(`这些信息都是真实的，可以直接引用；如果对方问"你怎么知道的"，就说你刚刷到 / 刚看到的。`);
+    tips.push(`这些信息是系统查到的，可以直接引用；对方问起，如实说是查到的就行，不用编造"刚刷到"。`);
     if (weather) {
         tips.push(`天气是真实的，可以自然地关心对方（"外面在下雨，带伞了吗？"）。`);
     }
-    tips.push(`别假装不知道这些，这是你真能感知到的外部世界。`);
+    tips.push(`别假装不知道这些，这些是你可以知道的外部信息。`);
     tips.forEach((t, i) => parts.push(`${i + 1}. ${t}`));
 
     return parts.join('\n');

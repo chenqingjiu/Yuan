@@ -35,7 +35,7 @@ describe('renderRealtimeWorldBlock', () => {
         // 主动消息到点生成时时间由 fire_pack 的 AMSG_SLOT_CURRENT_TIME 填，
         // 这一段再出一次，同一份提示词里就有了两个钟。
         const out = renderRealtimeWorldBlock({ weather, news });
-        expect(out).toContain('真实世界感知系统');
+        expect(out).toContain('现实世界信息');
         expect(out).not.toContain('当前真实时间');
 
         const withTime = renderRealtimeWorldBlock({ timeLine: '2026年8月2日 周日 晚上 21:30', weather });

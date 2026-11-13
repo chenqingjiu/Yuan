@@ -1,5 +1,4 @@
 import { buildChatOutputStylePrompt, readChatTranslationConfig } from './chatOutputStylePrompt';
-import { buildOfflineAmsgBlock, buildOfflineMainBlock } from './offlineMode/offlinePrompts';
 import { buildReproductionTask, DIAGNOSTIC_NAMESPACE, diagnosticRunId, type DiagnosticEvent } from './amsgReproduction';
 import { resolveDialogueApi } from './characterApi';
 import { isAnthropicEndpoint } from './llmEndpoint';
@@ -845,8 +844,6 @@ export const buildFirePack = async (
     library.categories,
     char.id,
   );
-  // 线下模式：主动消息也要同一套文体，否则同一个会话里两套格式混排。
-  const offlineEnabled = !!char.offlineConfig?.enabled;
   const systemPrompt = templateStub ? '' : await ChatPrompts.buildSystemPrompt(
     char,
     userProfile,
@@ -861,21 +858,15 @@ export const buildFirePack = async (
     undefined,
     // 模板是现在打好、到点才渲染的，凡是「打包这一刻」的状态都不烤进去。
     // 具体拿掉哪些块、到点由谁补，见 ChatPrompts.PromptBuildOptions 上的表。
-    { forFirePack: true, offlineMode: offlineEnabled },
+    { forFirePack: true },
   );
   const outputStyle = buildChatOutputStylePrompt({
     charName: char.name,
     userName: userProfile.name,
-    // 线下开着时让位：双语标签 / HTML 卡 / 思考链都会把「行首引号 = 台词」冲掉
-    translationConfig: offlineEnabled ? undefined : readChatTranslationConfig(char.id),
-    htmlMode: offlineEnabled ? undefined : { enabled: !!char.htmlModeEnabled, customPrompt: char.htmlModeCustomPrompt },
-    thinkingChain: offlineEnabled ? { enabled: false } : { enabled: !!char.showThinkingChain, customPrompt: char.thinkingChainCustomPrompt },
+    translationConfig: readChatTranslationConfig(char.id),
+    htmlMode: { enabled: !!char.htmlModeEnabled, customPrompt: char.htmlModeCustomPrompt },
+    thinkingChain: { enabled: !!char.showThinkingChain, customPrompt: char.thinkingChainCustomPrompt },
   });
-  // 线下格式块本身：主动消息的模板里没有它，到点生成出来的就是普通聊天体。
-  const offlineBlock = offlineEnabled && !templateStub
-    ? `\n\n${buildOfflineMainBlock({ char, userName: userProfile.name || '用户', cfg: char.offlineConfig })}`
-    : '';
-  const offlineAmsgBlock = offlineEnabled && !templateStub ? buildOfflineAmsgBlock(char.offlineConfig) : '';
   const recentTranscript = templateStub ? '' : ChatPrompts.buildMessageHistory(
     recentMessages,
     Math.max(1, recentMessages.length),
@@ -899,19 +890,16 @@ export const buildFirePack = async (
     '',
     '【重要规则】',
     '- 这不是回复用户刚刚发来的消息，而是角色主动来找用户聊天。',
-    ...(offlineEnabled
-      ? ['- 输出只能是最终要发送的消息正文，不要解释、不要写分析；按线下模式写：旁白不加引号，说出口的话整行用双引号包住。']
-      : ['- 输出只能是最终要发送的消息正文，不要解释，不要写分析，不要加引号。']),
+    '- 输出只能是最终要发送的消息正文，不要解释，不要写分析，不要加引号。',
     '- 像真实聊天一样简短自然，优先 1 到 2 句，最多 3 句。',
     '- 可以用换行拆成多个聊天气泡，但不要写时间戳、名字前缀、系统提示。',
     '- 不要出现“作为AI”“系统提示”等元话语。',
-    '- 语气更像真人突然想起对方时发来的私聊，不要像在完成任务。',
+    '- 语气像突然想起对方时随手发来的一条消息，不要像在完成任务。',
     '- 角色设定里描述的查记忆、读日记、联网搜索、逛小红书等能力照常可用：需要时正常输出对应标签，系统会取回结果后让你继续写。',
-    ...(offlineAmsgBlock ? ['', offlineAmsgBlock] : []),
     ...(recallHint ? [recallHint] : []),
     '',
     '【角色系统设定】',
-    systemPrompt + outputStyle.prompt + offlineBlock,
+    systemPrompt + outputStyle.prompt,
     `（注意：上面角色设定里的情绪、印象等状态是最近一次聊天时的快照。${timeAware ? '此刻的时间、你正在做什么' : '你此刻正在做什么'}，以下方「当前时刻补充」为准。）`,
     '',
     '【最近对话上下文】',

@@ -81,7 +81,6 @@ export const Icons: Record<string, React.FC<{ className?: string }>> = {
   CharCreatorDev: ({ className }) => <Wrench className={className} weight="regular" />,
   WorldHome: ({ className }) => <HouseLine className={className} weight="regular" />,
   Fanwai: ({ className }) => <Feather className={className} weight="regular" />,
-  RealityBridge: ({ className }) => <ArrowsLeftRight className={className} weight="regular" />,
   Weread: ({ className }) => <Books className={className} weight="regular" />,
 };
 
@@ -120,7 +119,6 @@ export const INSTALLED_APPS: AppConfig[] = [
   { id: AppID.Appearance, name: '外观', icon: 'Appearance', color: 'slate' },
   { id: AppID.Settings, name: '设置', icon: 'Settings', color: 'slate' },
   { id: AppID.Guidebook, name: '攻略本', icon: 'Guidebook', color: 'slate' },
-  { id: AppID.RealityBridge, name: '现实桥', icon: 'RealityBridge', color: 'lime' },
   { id: AppID.LifeSim, name: '都市人生', icon: 'LifeSim', color: 'purple' },
   { id: AppID.SpecialMoments, name: '特别时光', icon: 'SpecialMoments', color: 'pink' },
   { id: AppID.Music, name: '音乐', icon: 'Music', color: 'rose' },
