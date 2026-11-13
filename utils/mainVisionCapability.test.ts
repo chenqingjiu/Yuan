@@ -70,28 +70,56 @@ describe('probeMainVision', () => {
         return fn;
     };
 
-    it('主模型正常回话 → 支持，且请求里带的是经代理的图', async () => {
-        const fn = stubFetch(async () => ({
+    /** 默认的 fetch 分流：代理取图返回一张小图，chat 请求返回模型回答。 */
+    const stubHappyFetch = (chatContent: string) => stubFetch(async (url) => {
+        if (url.includes('/xhs-media')) {
+            return { ok: true, status: 200, blob: async () => new Blob(['fake-image-bytes'], { type: 'image/png' }) };
+        }
+        return {
             ok: true,
             status: 200,
-            json: async () => ({ choices: [{ message: { content: '红色' } }] }),
-        }));
+            json: async () => ({ choices: [{ message: { content: chatContent } }] }),
+        };
+    });
+
+    it('主模型正常回话 → 支持，且图先经代理取回、转成 base64 再发', async () => {
+        const fn = stubHappyFetch('红色');
         const result = await probeMainVision(config);
         expect(result.supported).toBe(true);
 
-        const body = JSON.parse(fn.mock.calls[0][1].body);
+        // 第一跳：浏览器从代理取图。
+        expect(fn.mock.calls[0][0]).toContain('/xhs-media?url=');
+        // 第二跳：发给主模型的是 data URL，不再是代理地址。
+        const body = JSON.parse(fn.mock.calls[1][1].body);
         expect(body.model).toBe('demo-vl-model');
         const parts = body.messages[0].content;
         expect(parts[1].type).toBe('image_url');
-        expect(parts[1].image_url.url).toContain('/xhs-media?url=');
+        expect(parts[1].image_url.url).toMatch(/^data:image\//);
+    });
+
+    it('代理取不到图 → 不支持，提示 worker 问题而不是模型问题', async () => {
+        stubFetch(async (url) => {
+            if (url.includes('/xhs-media')) {
+                return { ok: false, status: 404, blob: async () => new Blob() };
+            }
+            return { ok: true, status: 200, json: async () => ({}) };
+        });
+        const result = await probeMainVision(config);
+        expect(result.supported).toBe(false);
+        expect(result.reason).toContain('/xhs-media');
     });
 
     it('模型不收图（400）→ 不支持，把原因带出来', async () => {
-        stubFetch(async () => ({
-            ok: false,
-            status: 400,
-            text: async () => 'invalid content type image_url',
-        }));
+        stubFetch(async (url) => {
+            if (url.includes('/xhs-media')) {
+                return { ok: true, status: 200, blob: async () => new Blob(['x'], { type: 'image/png' }) };
+            }
+            return {
+                ok: false,
+                status: 400,
+                text: async () => 'invalid content type image_url',
+            };
+        });
         const result = await probeMainVision(config);
         expect(result.supported).toBe(false);
         expect(result.reason).toContain('400');
