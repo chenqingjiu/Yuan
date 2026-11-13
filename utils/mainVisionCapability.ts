@@ -10,7 +10,7 @@
  * 探测同时验证两件事——worker 的 /xhs-media 代理能取到小红书图片、主模型吃得下这张图。
  */
 
-import { fetchXhsImageAsDataUrl } from './xhsMedia';
+import { buildXhsMediaProxyUrl } from './xhsMedia';
 import { getProxyWorkerUrl } from './proxyWorker';
 
 /** 自动 = 按探测结果；开 = 强制直传；关 = 永远走文字描述。 */
@@ -105,8 +105,6 @@ export interface MainVisionProbeResult {
 
 /**
  * 真跑一次请求：拿一张经 worker 代理的小红书图，问主模型它是什么颜色。
- * 图片先在浏览器侧取回转成 data URL —— 否则中转站/上游下载代理地址失败时，
- * 会把「渠道不收图」和「渠道下载不到图」混成同一个错误，探测结论就不准了。
  * 代理没部署（404）或主模型不吃图，都算不支持 —— 两种情况直传都会失败。
  */
 export async function probeMainVision(config: {
@@ -120,10 +118,7 @@ export async function probeMainVision(config: {
     if (!baseUrl || !apiKey || !model) return { supported: false, reason: '主 API 的 URL / Key / Model 还没填完整' };
 
     const proxyBase = getProxyWorkerUrl();
-    const imageUrl = await fetchXhsImageAsDataUrl(proxyBase, PROBE_IMAGE);
-    if (!imageUrl) {
-        return { supported: false, reason: '小红书图片代理 /xhs-media 取不到图（worker 未部署或地址不对），直传暂时用不了' };
-    }
+    const imageUrl = buildXhsMediaProxyUrl(proxyBase, PROBE_IMAGE) || PROBE_IMAGE;
 
     let res: Response;
     try {
@@ -152,6 +147,9 @@ export async function probeMainVision(config: {
     if (!res.ok) {
         const detail = await res.text().catch(() => '');
         const trimmed = detail.replace(/\s+/g, ' ').slice(0, 160);
+        if (res.status === 404 && !trimmed) {
+            return { supported: false, reason: '小红书图片代理 /xhs-media 还没部署（404），直传暂时用不了' };
+        }
         return { supported: false, reason: `主模型不收图（HTTP ${res.status}${trimmed ? `：${trimmed}` : ''}）` };
     }
 
