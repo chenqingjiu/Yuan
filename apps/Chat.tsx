@@ -43,7 +43,7 @@ import {
     VIDEO_MAX_UPLOAD_BYTES,
 } from '../utils/videoMessage';
 import { describeVideoForMessage } from '../utils/videoApi';
-import { describeXhsNoteMedia, materializeXhsCardImages } from '../utils/xhsMedia';
+import { describeXhsNoteMedia } from '../utils/xhsMedia';
 import { buildReplySnapshotContent } from '../utils/applyAssistantPostProcessing';
 import { resolveLifeRecordCard } from '../utils/lifeRecords';
 import { isMcdConfigured } from '../utils/mcdMcpClient';
@@ -1635,18 +1635,6 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
                         // 没配自建小红书服务时 proxyBase 兜底到默认 worker，否则这里直接返回空串。
                         // 主模型自己能看图时不跑这一步：配图会随主请求直传，再转文字就是重复付费。
                         const mainSeesImages = shouldAttachMainVisionImages();
-                        // 直传模式：卡片刚保存就立刻预取配图转 base64 存档，
-                        // 回复请求发出时大概率已就绪（与请求前的补齐共用并发去重）。
-                        if (xhsCardId && mainSeesImages && (note.imageUrls?.length || 0) > 0) {
-                            void materializeXhsCardImages([{
-                                id: xhsCardId,
-                                charId: char.id,
-                                role: 'user',
-                                type: 'xhs_card',
-                                content: note.title || '小红书笔记',
-                                metadata: { ...metadata, xhsNote: note },
-                            } as Message]).catch(e => console.warn('[XhsMedia] prefetch base64 failed:', e));
-                        }
                         if (xhsCardId && !mainSeesImages && ((note.imageUrls?.length || 0) > 0 || note.videoUrl)) {
                             const proxyBase = realtimeConfig?.xhsMcpConfig?.serverUrl || getProxyWorkerUrl();
                             void (async () => {
