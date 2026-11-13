@@ -50,6 +50,38 @@ export interface XhsMediaOptions {
     videoApi?: VideoApiConfig | null;
 }
 
+/** 图片超过这个大小就放弃识图（base64 后体积还会再涨 1/3，太大容易撞请求体上限）。 */
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+
+/**
+ * 经 worker 代理把一张小红书图取回来，转成 data URL。
+ *
+ * 为什么不把代理 URL 直接交给视觉模型：视觉 API（如硅基流动）的服务端去下载
+ * Cloudflare 上的代理地址经常超时/被拒——报「URL must be downloadable」。
+ * 浏览器侧取图走用户自己的网络（能打开代理页就能取到），拿到字节转 base64
+ * 直传，视觉 API 只需要认 data URL，不再依赖它机房的连通性。
+ */
+export const fetchXhsImageAsDataUrl = async (proxyBase: string, rawUrl: string): Promise<string> => {
+    const proxied = buildXhsMediaProxyUrl(proxyBase, rawUrl);
+    if (!proxied) return '';
+    try {
+        const res = await fetch(proxied);
+        if (!res.ok) return '';
+        const blob = await res.blob();
+        if (!blob.size || blob.size > MAX_IMAGE_BYTES) return '';
+        // 不走 FileReader：node 测试环境里没有这个类，arrayBuffer + btoa 两边都通用。
+        const bytes = new Uint8Array(await blob.arrayBuffer());
+        let binary = '';
+        const CHUNK = 0x8000;
+        for (let i = 0; i < bytes.length; i += CHUNK) {
+            binary += String.fromCharCode(...Array.from(bytes.subarray(i, i + CHUNK)));
+        }
+        return `data:${blob.type || 'image/png'};base64,${btoa(binary)}`;
+    } catch {
+        return '';
+    }
+};
+
 /**
  * 生成笔记的画面描述。返回值直接塞进 metadata.xhsNote.mediaDesc。
  *
@@ -68,10 +100,10 @@ export async function describeXhsNoteMedia(
 
     if (options.visionApi?.enabled === true && images.length > 0) {
         for (const image of images) {
-            const proxied = buildXhsMediaProxyUrl(proxyBase, image);
-            if (!proxied) continue;
             try {
-                const desc = await describeImageWithVisionApi(proxied, options.visionApi);
+                const dataUrl = await fetchXhsImageAsDataUrl(proxyBase, image);
+                if (!dataUrl) continue;
+                const desc = await describeImageWithVisionApi(dataUrl, options.visionApi);
                 const trimmed = String(desc || '').trim();
                 if (trimmed) parts.push(trimmed.slice(0, 300));
             } catch {
