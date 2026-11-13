@@ -39,6 +39,8 @@ import { mergeSystemMessages } from './systemMessageMerge';
 import { cleanApiMessages, flattenImageContentParts } from './promptMessageCleanup';
 import { materializeVisionDescriptions } from './visionApi';
 import { materializeVideoDescriptions } from './videoApi';
+import { materializeXhsCardImages } from './xhsMedia';
+import { shouldAttachMainVisionImages } from './mainVisionCapability';
 import type { RecallEntryPoint, RecallTrace } from './memoryPalace/trace';
 import { isChatConversationEntry } from './memoryPalace/trace';
 import { loadCollaborationFileCabinetBlock } from '../features/collaboration/chatLibrary';
@@ -141,7 +143,7 @@ export interface BuildChatPayloadInput {
     timelyByWorker?: boolean;
 }
 
-export type ChatPreparationStage='vision'|'video'|'memory'|'prompt'|'collaboration'|'tasks';
+export type ChatPreparationStage='vision'|'video'|'xhsImages'|'memory'|'prompt'|'collaboration'|'tasks';
 export type ChatPreparationEvent={stage:ChatPreparationStage;status:'start'}|{stage:ChatPreparationStage;status:'end';ms:number};
 
 export interface BuildChatPayloadResult {
@@ -309,6 +311,21 @@ export async function buildChatRequestPayload(input: BuildChatPayloadInput): Pro
         const prepared = await prepare('video', () => materializeVideoDescriptions(
             [...uniqueMessages.values()],
             input.videoApiConfig,
+        ));
+        const preparedById = new Map(prepared.map(message => [message.id, message]));
+        historyMsgsForPrompt = historyMsgsForPrompt.map(message => preparedById.get(message.id) || message);
+        recentMsgsHint = recentMsgsHint.map(message => preparedById.get(message.id) || message);
+    }
+
+    // 小红书配图直传：主模型开启直传时，把可见范围里的卡片配图取回成 base64
+    // （中转/上游一般不会替用户下载 image_url，代理地址发过去等于没发）。
+    // 取回一次写进消息存档，之后每轮请求直接复用，不增加延迟。
+    if (shouldAttachMainVisionImages()) {
+        const uniqueMessages = new Map<number, Message>();
+        for (const message of recentMsgsHint) uniqueMessages.set(message.id, message);
+        for (const message of historyMsgsForPrompt) uniqueMessages.set(message.id, message);
+        const prepared = await prepare('xhsImages', () => materializeXhsCardImages(
+            [...uniqueMessages.values()],
         ));
         const preparedById = new Map(prepared.map(message => [message.id, message]));
         historyMsgsForPrompt = historyMsgsForPrompt.map(message => preparedById.get(message.id) || message);
