@@ -15,6 +15,8 @@ export function GameReplayCard({ meta }: { meta: any }) {
     const mvp: string = meta?.mvp || '';
     const mvpScore: number = meta?.mvpScore ?? 0;
     const transcript: string = meta?.transcript || '';
+    /** 斗地主等新游戏自带一行概括；旧数据回退到「N轮·N人·MVP」拼法。 */
+    const subtitle: string = meta?.subtitle || `${rounds}轮 · ${playerCount}人 · MVP ${mvp}（${mvpScore}分）`;
 
     return (
         <div className="w-60 rounded-2xl overflow-hidden border border-slate-200 bg-white shadow-[0_2px_10px_rgba(0,0,0,0.06)]">
@@ -23,7 +25,7 @@ export function GameReplayCard({ meta }: { meta: any }) {
                     <span className="text-base">🎮</span>
                     <div className="min-w-0">
                         <p className="text-[13px] font-bold text-slate-800 leading-tight">{game} · 战报</p>
-                        <p className="text-[10px] text-slate-400 mt-0.5 truncate">{rounds}轮 · {playerCount}人 · MVP {mvp}（{mvpScore}分）</p>
+                        <p className="text-[10px] text-slate-400 mt-0.5 truncate">{subtitle}</p>
                     </div>
                 </div>
                 <span className="text-[10px] text-slate-400 shrink-0">{open ? '收起 ▴' : '展开 ▾'}</span>
