@@ -41,11 +41,10 @@ interface Seat {
 
 const AI_DELAY = 750;
 const BID_DELAY = 600;
-const MAX_LINES = 14;
 
-// ---------------------------------------------------------------- 角色台词 API
+// ---------------------------------------------------------------- 牌桌聊天 API
 
-/** 角色台词专属 API（按 charId 存 localStorage，不污染角色的聊天配置）。 */
+/** 角色牌桌聊天专属 API（按 charId 存 localStorage，不污染角色的聊天配置）。 */
 interface SpeechApiConfig { baseUrl: string; apiKey: string; model: string }
 const SPEECH_API_KEY = 'ddz_speech_apis';
 
@@ -118,13 +117,13 @@ export default function DoudizhuApp({ onBack }: Props) {
     const [speech, setSpeech] = useState<Record<string, string>>({});
     const [ended, setEnded] = useState(false);
     const [showReport, setShowReport] = useState(false);
-    /** 台词气泡展开的角色座位（手机上显示不全时点开看全文）。 */
+    /** 气泡展开的角色座位（手机上显示不全时点开看全文）。 */
     const [expandedSeat, setExpandedSeat] = useState<string | null>(null);
-    /** 台词 API 设置面板展开的角色 id。 */
+    /** 牌桌聊天 API 设置面板展开的角色 id。 */
     const [apiPanelChar, setApiPanelChar] = useState<string | null>(null);
-    /** 台词 API 草稿（编辑中，未保存）。 */
+    /** 牌桌聊天 API 草稿（编辑中，未保存）。 */
     const [apiDraft, setApiDraft] = useState<Record<string, SpeechApiConfig>>({});
-    /** 已保存的角色台词 API（charId → 配置）。 */
+    /** 已保存的角色牌桌聊天 API（charId → 配置）。 */
     const [speechApis, setSpeechApis] = useState<Record<string, SpeechApiConfig>>(() => loadSpeechApis());
 
     /** 牌桌聊天记录（不进 DdzState，纯旁路数据）。 */
@@ -139,7 +138,6 @@ export default function DoudizhuApp({ onBack }: Props) {
 
     const stateRef = useRef<DdzState | null>(null);
     const seatsRef = useRef<Seat[]>([]);
-    const spokenRef = useRef(0);
     /** 本局出牌过程记录（战报用）。 */
     const playLogRef = useRef<string[]>([]);
     /** 聊天记录的同步副本（异步回调里读，避免闭包拿到旧值）。 */
@@ -195,7 +193,6 @@ export default function DoudizhuApp({ onBack }: Props) {
         setEnded(false);
         setShowReport(false);
         setExpandedSeat(null);
-        spokenRef.current = 0;
         playLogRef.current = [];
         // 新的一局，牌桌上的话也重新开始
         setTableChat([]);
@@ -208,7 +205,7 @@ export default function DoudizhuApp({ onBack }: Props) {
         setView('play');
     };
 
-    // ---- AI 台词（用角色人设现编一句，失败就用规则兜底文案）
+    // ---- 局面描述 + API 解析（出牌不调模型；只有牌桌聊天才调用）
 
     const describeSituation = (s: DdzState, pid: string): string => {
         const role = s.landlord === pid ? '地主' : '农民';
@@ -224,7 +221,7 @@ export default function DoudizhuApp({ onBack }: Props) {
     };
 
     /**
-     * 台词 API 优先级：角色在游戏里单独设置的 API → 角色自带的专属对话 API
+     * 牌桌聊天 API 优先级：角色在游戏里单独设置的 API → 角色自带的专属对话 API
      * （CharacterProfile.dialogueApi，聊天设置里配过的）→ 主 API。不走副 API。
      */
     const resolveSpeechEndpoint = (seat: Seat): ApiEndpoint | null => {
@@ -244,50 +241,7 @@ export default function DoudizhuApp({ onBack }: Props) {
         void s;
     };
 
-    const maybeSpeak = async (pid: string, s: DdzState, fallback: string) => {
-        if (!pid || !fallback) return;
-        if (spokenRef.current >= MAX_LINES) return;
-        if (Math.random() > 0.35) return;
-        const seat = seatsRef.current.find((x) => x.id === pid);
-        if (!seat || seat.isUser) return;
-        const endpoint = resolveSpeechEndpoint(seat);
-        if (!endpoint) return;
-        spokenRef.current += 1;
-        try {
-            // 牌桌上刚聊过什么，让它接得上话，别自说自话。
-            const history = buildHistoryBlock(chatRef.current, 5);
-            const res = await callGameApi(endpoint, endpoint, false, {
-                system: [
-                    `你正在和用户一起打斗地主，你是「${seat.name}」。`,
-                    seat.persona ? `你的人设：${seat.persona}` : '',
-                    '用一句话（不超过18个字）说出此刻的反应或吐槽。',
-                    history ? '如果牌桌上刚聊过什么，可以顺着那句接，但别复读别人说过的话。' : '',
-                    '只输出这一句话：不要引号、不要动作描写、不要旁白、不要解释你在做什么。',
-                ].filter(Boolean).join('\n'),
-                messages: [{
-                    role: 'user',
-                    content: [
-                        `局面：${describeSituation(s, pid)}。你刚才：${fallback}`,
-                        history ? `\n最近牌桌上的话：\n${history}` : '',
-                    ].join(''),
-                }],
-                temperature: 0.95,
-                maxTokens: 48,
-                purpose: '斗地主台词',
-            });
-            if (!res.ok || !res.text) return;
-            const line = res.text
-                .replace(/[\r\n]+/g, ' ')
-                .replace(/^[「『“"']+|[」』”"']+$/g, '')
-                .trim()
-                .slice(0, 40);
-            if (line) setSpeech((prev) => ({ ...prev, [pid]: line }));
-        } catch {
-            /* 台词只是点缀，失败保留规则文案 */
-        }
-    };
-
-    // ---- AI 回合驱动
+    // ---- AI 回合驱动    // ---- AI 回合驱动
 
     useEffect(() => {
         // 你在打字 → 整桌停下等你（不打字时照常自动接牌）
@@ -330,7 +284,6 @@ export default function DoudizhuApp({ onBack }: Props) {
             const nameOf = (id: string) => seatsRef.current.find((x) => x.id === id)?.name || id;
             logLine(nameOf, next, pid, logWhat);
             if (line) setSpeech((s) => ({ ...s, [pid]: line }));
-            void maybeSpeak(pid, next, line);
         }, state.phase === 'bidding' ? BID_DELAY : AI_DELAY);
 
         return () => {
@@ -435,7 +388,7 @@ export default function DoudizhuApp({ onBack }: Props) {
         if (!endpoint) {
             if (!chatWarnedRef.current.has(seat.id)) {
                 chatWarnedRef.current.add(seat.id);
-                addToast(`${seat.name} 还没配台词 API，现在只能听你说`, 'info');
+                addToast(`${seat.name} 还没配牌桌聊天的 API，现在只能听你说`, 'info');
             }
             return;
         }
@@ -584,7 +537,7 @@ export default function DoudizhuApp({ onBack }: Props) {
         });
     };
 
-    /** 打开某角色的台词 API 面板：预填已保存的 → 角色自带 dialogueApi → 空。 */
+    /** 打开某角色的牌桌聊天 API 面板：预填已保存的 → 角色自带 dialogueApi → 空。 */
     const openApiPanel = (charId: string) => {
         if (apiPanelChar === charId) {
             setApiPanelChar(null);
@@ -604,7 +557,7 @@ export default function DoudizhuApp({ onBack }: Props) {
         saveSpeechApi(charId, cfg);
         setSpeechApis(loadSpeechApis());
         setApiPanelChar(null);
-        addToast('已保存该角色的专属台词 API', 'success');
+        addToast('已保存该角色的牌桌聊天 API', 'success');
     };
 
     const clearApiDraft = (charId: string) => {
@@ -676,9 +629,9 @@ export default function DoudizhuApp({ onBack }: Props) {
 
                     {picked.length > 0 && (
                         <div>
-                            <h3 className="text-sm font-bold text-slate-800">台词 API（可选）</h3>
+                            <h3 className="text-sm font-bold text-slate-800">牌桌聊天 API（可选）</h3>
                             <p className="text-[11px] text-slate-400 mt-0.5 mb-2">
-                                给每个角色单独配打牌时的说话模型；不填则依次回退角色的专属对话 API、主 API。
+                                给每个角色单独配牌桌聊天用的模型；不填则依次回退角色的专属对话 API、主 API。只有你说过话时才会调用，出牌本身不消耗额度。
                             </p>
                             <div className="space-y-2">
                                 {picked.map((cid) => {
@@ -693,7 +646,7 @@ export default function DoudizhuApp({ onBack }: Props) {
                                                 <span className="w-7 h-7 rounded-full bg-violet-200 flex items-center justify-center text-xs font-bold text-violet-700 shrink-0 overflow-hidden">
                                                     {c.avatar ? <img src={c.avatar} className="w-full h-full object-cover" alt="" /> : c.name.slice(0, 1)}
                                                 </span>
-                                                <span className="text-[13px] font-bold text-slate-700">{c.name} 的台词 API</span>
+                                                <span className="text-[13px] font-bold text-slate-700">{c.name} 的聊天 API</span>
                                                 <span className={`ml-auto text-[10px] px-1.5 py-0.5 rounded-full shrink-0 ${saved ? 'bg-emerald-100 text-emerald-700 font-bold' : 'bg-slate-100 text-slate-400'}`}>
                                                     {saved ? '已单独设置' : '跟随默认'}
                                                 </span>
