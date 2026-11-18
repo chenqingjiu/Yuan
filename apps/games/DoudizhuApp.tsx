@@ -16,6 +16,14 @@ import {
     createGame,
     sortCards,
 } from '../../utils/games/doudizhu/rules';
+import {
+    buildHistoryBlock,
+    formatChatForReport,
+    makeLine,
+    pickResponder,
+    toReportChat,
+    type TableLine,
+} from '../../utils/games/doudizhu/tableChat';
 
 interface Props {
     onBack: () => void;
@@ -119,14 +127,34 @@ export default function DoudizhuApp({ onBack }: Props) {
     /** 已保存的角色台词 API（charId → 配置）。 */
     const [speechApis, setSpeechApis] = useState<Record<string, SpeechApiConfig>>(() => loadSpeechApis());
 
+    /** 牌桌聊天记录（不进 DdzState，纯旁路数据）。 */
+    const [tableChat, setTableChat] = useState<TableLine[]>([]);
+    const [chatDraft, setChatDraft] = useState('');
+    /** 聊天记录区是否展开（收起时只留输入框，省地方）。 */
+    const [chatOpen, setChatOpen] = useState(true);
+    /** 正在打字回话的角色 id。 */
+    const [chatBusyId, setChatBusyId] = useState<string | null>(null);
+    /** 输入框聚焦时暂停整桌，焦点离开就恢复。 */
+    const [paused, setPaused] = useState(false);
+
     const stateRef = useRef<DdzState | null>(null);
     const seatsRef = useRef<Seat[]>([]);
     const spokenRef = useRef(0);
     /** 本局出牌过程记录（战报用）。 */
     const playLogRef = useRef<string[]>([]);
+    /** 聊天记录的同步副本（异步回调里读，避免闭包拿到旧值）。 */
+    const chatRef = useRef<TableLine[]>([]);
+    /** 上一次接话的角色，避免同一个人连着说。 */
+    const lastChatterRef = useRef<string | null>(null);
+    /** 已经提示过「没配 API」的角色，别反复弹。 */
+    const chatWarnedRef = useRef<Set<string>>(new Set());
+    const pausedRef = useRef(false);
+    /** 串行回复：连着发两句时，第二句等第一句回完，不会抢话。 */
+    const chatQueueRef = useRef<Promise<void>>(Promise.resolve());
 
     useEffect(() => { stateRef.current = state; }, [state]);
     useEffect(() => { seatsRef.current = seats; }, [seats]);
+    useEffect(() => { pausedRef.current = paused; }, [paused]);
 
     const mainApi: ApiEndpoint = useMemo(
         () => ({ baseUrl: apiConfig.baseUrl, apiKey: apiConfig.apiKey, model: apiConfig.model }),
@@ -169,6 +197,14 @@ export default function DoudizhuApp({ onBack }: Props) {
         setExpandedSeat(null);
         spokenRef.current = 0;
         playLogRef.current = [];
+        // 新的一局，牌桌上的话也重新开始
+        setTableChat([]);
+        chatRef.current = [];
+        setChatDraft('');
+        setChatOpen(true);
+        setChatBusyId(null);
+        setPaused(false);
+        lastChatterRef.current = null;
         setView('play');
     };
 
@@ -218,14 +254,23 @@ export default function DoudizhuApp({ onBack }: Props) {
         if (!endpoint) return;
         spokenRef.current += 1;
         try {
+            // 牌桌上刚聊过什么，让它接得上话，别自说自话。
+            const history = buildHistoryBlock(chatRef.current, 5);
             const res = await callGameApi(endpoint, endpoint, false, {
                 system: [
                     `你正在和用户一起打斗地主，你是「${seat.name}」。`,
                     seat.persona ? `你的人设：${seat.persona}` : '',
                     '用一句话（不超过18个字）说出此刻的反应或吐槽。',
+                    history ? '如果牌桌上刚聊过什么，可以顺着那句接，但别复读别人说过的话。' : '',
                     '只输出这一句话：不要引号、不要动作描写、不要旁白、不要解释你在做什么。',
                 ].filter(Boolean).join('\n'),
-                messages: [{ role: 'user', content: `局面：${describeSituation(s, pid)}。你刚才：${fallback}` }],
+                messages: [{
+                    role: 'user',
+                    content: [
+                        `局面：${describeSituation(s, pid)}。你刚才：${fallback}`,
+                        history ? `\n最近牌桌上的话：\n${history}` : '',
+                    ].join(''),
+                }],
                 temperature: 0.95,
                 maxTokens: 48,
                 purpose: '斗地主台词',
@@ -245,7 +290,8 @@ export default function DoudizhuApp({ onBack }: Props) {
     // ---- AI 回合驱动
 
     useEffect(() => {
-        if (!state || state.phase === 'over' || state.currentPlayer === 'user') return;
+        // 你在打字 → 整桌停下等你（不打字时照常自动接牌）
+        if (!state || paused || state.phase === 'over' || state.currentPlayer === 'user') return;
         const pid = state.currentPlayer;
         let cancelled = false;
 
@@ -292,7 +338,7 @@ export default function DoudizhuApp({ onBack }: Props) {
             clearTimeout(timer);
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [state]);
+    }, [state, paused]);
 
     // ---- 结算
 
@@ -373,6 +419,89 @@ export default function DoudizhuApp({ onBack }: Props) {
         }
     };
 
+    // ---- 牌桌聊天
+
+    const pushChat = (line: TableLine) => {
+        const next = [...chatRef.current, line];
+        chatRef.current = next;
+        setTableChat(next);
+    };
+
+    /** 某个角色当场接一句。失败静默，绝不打断牌局。 */
+    const replyChat = async (seat: Seat, text: string) => {
+        // 用最新局面（发送时可能已经过了几手）
+        const s = stateRef.current;
+        const endpoint = resolveSpeechEndpoint(seat);
+        if (!endpoint) {
+            if (!chatWarnedRef.current.has(seat.id)) {
+                chatWarnedRef.current.add(seat.id);
+                addToast(`${seat.name} 还没配台词 API，现在只能听你说`, 'info');
+            }
+            return;
+        }
+        setChatBusyId(seat.id);
+        try {
+            const history = buildHistoryBlock(chatRef.current, 5);
+            const res = await callGameApi(endpoint, endpoint, false, {
+                system: [
+                    `你正在和用户一起打斗地主，你是「${seat.name}」，就坐在牌桌上。`,
+                    seat.persona ? `你的人设：${seat.persona}` : '',
+                    `此刻的局面：${s ? describeSituation(s, seat.id) : '刚开局'}。`,
+                    '用户在牌桌上跟你说话，你要当场接一句：',
+                    '- 像真人坐在牌桌上随口回话，不超过 30 字',
+                    '- 先接住对方的话头，再带一点自己的处境或情绪，别答非所问',
+                    '- 不要旁白、不要动作描写、不要引号、不要解释你在做什么',
+                    '- 不要报具体手牌，但可以拿牌好牌差说事',
+                ].filter(Boolean).join('\n'),
+                messages: [{
+                    role: 'user',
+                    content: [
+                        history ? `刚才牌桌上的话：\n${history}\n\n` : '',
+                        `用户对你说：${text}`,
+                    ].join(''),
+                }],
+                temperature: 0.95,
+                maxTokens: 96,
+                purpose: '斗地主牌桌聊天',
+            });
+            if (!res.ok || !res.text) return;
+            const line = res.text
+                .replace(/[\r\n]+/g, ' ')
+                .replace(/^[「『“"']+|[」』”"']+$/g, '')
+                .trim()
+                .slice(0, 120);
+            if (!line) return;
+            pushChat(makeLine(seat.id, seat.name, 'char', line));
+            lastChatterRef.current = seat.id;
+        } catch {
+            /* 说话失败不影响打牌 */
+        } finally {
+            setChatBusyId(null);
+        }
+    };
+
+    /** 串行回复：连着发两句时，第二句等第一句回完，不会抢话。 */
+    const sendChat = () => {
+        const text = chatDraft.trim();
+        const s = stateRef.current;
+        if (!text || !s) return;
+        setChatDraft('');
+        pushChat(makeLine('user', meName(), 'user', text));
+        setChatOpen(true);
+
+        const rivals = seatsRef.current.filter((x) => !x.isUser);
+        if (!rivals.length) return;
+        const targetId = pickResponder(
+            text,
+            rivals.map((r) => ({ id: r.id, name: r.name })),
+            s.currentPlayer,
+            lastChatterRef.current,
+        );
+        const seat = rivals.find((r) => r.id === targetId);
+        if (!seat) return;
+        chatQueueRef.current = chatQueueRef.current.then(() => replyChat(seat, text)).catch(() => { });
+    };
+
     // ---- 战报
 
     const reportText = useMemo(() => {
@@ -411,10 +540,15 @@ export default function DoudizhuApp({ onBack }: Props) {
         const ts = Date.now();
         const transcript = playLogRef.current.join('\n');
         const nameOf = (id: string | null) => seats.find((s) => s.id === id)?.name || '未知';
-        // 内容给模型看：完整战报 + 过程，让角色明确「刚和用户打了一局斗地主」。
-        const fullContent = transcript
-            ? `${reportText}\n\n对局过程（你我同桌）：\n${transcript}`
-            : reportText;
+        // 牌桌上的话原封不动带回去：一条不删、一句不改，只加说话人。
+        const chatText = formatChatForReport(chatRef.current);
+        const chatItems = toReportChat(chatRef.current);
+        // 内容给模型看：战报 + 过程 + 对话原文，让角色明确「刚和用户打了一局、还聊了这些」。
+        const fullContent = [
+            reportText,
+            transcript ? `\n\n对局过程（你我同桌）：\n${transcript}` : '',
+            chatText ? `\n\n牌桌上的对话（原话）：\n${chatText}` : '',
+        ].join('');
         for (const seat of targets) {
             await DB.saveMessage({
                 charId: seat.charId!,
@@ -428,6 +562,7 @@ export default function DoudizhuApp({ onBack }: Props) {
                     playerCount: seats.length,
                     mvp: nameOf(state.winner),
                     transcript,
+                    chat: chatItems,
                     summary: reportText,
                     myRole: state.landlord === seat.id ? '地主' : '农民',
                     landlordName: nameOf(state.landlord),
@@ -702,9 +837,11 @@ export default function DoudizhuApp({ onBack }: Props) {
                 <p className="mt-3 text-[11px] text-amber-200/90 h-4">
                     {over
                         ? ''
-                        : state.currentPlayer === 'user'
-                            ? '轮到你了'
-                            : `${seats.find((s) => s.id === state.currentPlayer)?.name || '对手'} 思考中…`}
+                        : paused
+                            ? '已暂停 · 你说话的时候没人出牌'
+                            : state.currentPlayer === 'user'
+                                ? '轮到你了'
+                                : `${seats.find((s) => s.id === state.currentPlayer)?.name || '对手'} 思考中…`}
                 </p>
             </div>
 
@@ -744,7 +881,7 @@ export default function DoudizhuApp({ onBack }: Props) {
             </div>
 
             {/* 操作栏 */}
-            <div className="shrink-0 px-3 pb-3" style={{ paddingBottom: 'calc(var(--safe-bottom, 0px) + 0.75rem)' }}>
+            <div className="shrink-0 px-3 pb-2">
                 {bidding ? (
                     <div className="flex gap-2">
                         <button
@@ -797,6 +934,66 @@ export default function DoudizhuApp({ onBack }: Props) {
                 )}
             </div>
 
+            {/* 牌桌聊天：常驻底部，打字时整桌暂停 */}
+            <div className="shrink-0 border-t border-white/10 bg-black/25" style={{ paddingBottom: 'calc(var(--safe-bottom, 0px) + 0.4rem)' }}>
+                {chatOpen && (
+                    <div className="max-h-[34vh] overflow-y-auto px-3 py-2 space-y-1.5">
+                        {tableChat.length === 0 && (
+                            <p className="text-[10px] text-emerald-300/50 text-center py-1">牌桌上还没人说话，说一句试试</p>
+                        )}
+                        {tableChat.map((l) => (
+                            <div key={l.id} className={`flex ${l.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                                <div className={`max-w-[82%] rounded-xl px-2 py-1 ${l.role === 'user' ? 'bg-amber-400/90 text-amber-950' : 'bg-white/10 text-emerald-50'}`}>
+                                    <div className={`text-[9px] leading-none mb-0.5 ${l.role === 'user' ? 'text-amber-900/70' : 'text-emerald-200/60'}`}>{l.speakerName}</div>
+                                    <p className="text-[11.5px] leading-snug whitespace-pre-wrap break-words">{l.text}</p>
+                                </div>
+                            </div>
+                        ))}
+                        {chatBusyId && (
+                            <p className="text-[10px] text-emerald-300/60 pt-0.5">
+                                {seats.find((s) => s.id === chatBusyId)?.name} 正在打字…
+                            </p>
+                        )}
+                    </div>
+                )}
+
+                <div className="flex items-center gap-1.5 px-3 pt-1.5">
+                    <button
+                        onClick={() => setChatOpen((o) => !o)}
+                        className="shrink-0 h-9 px-2 rounded-xl bg-white/10 text-emerald-100 flex items-center cursor-pointer"
+                        aria-label="展开牌桌对话"
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor" className="w-4 h-4">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M8.625 12a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H8.25m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H12m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 0 1-2.555-.337A5.972 5.972 0 0 1 5.41 20.97a5.969 5.969 0 0 1-.474-.065 4.48 4.48 0 0 0 .978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25Z" />
+                        </svg>
+                        {tableChat.length > 0 && <span className="ml-0.5 text-[10px] font-bold">{tableChat.length}</span>}
+                    </button>
+                    <input
+                        value={chatDraft}
+                        onChange={(e) => setChatDraft(e.target.value)}
+                        onFocus={() => setPaused(true)}
+                        onBlur={() => setPaused(false)}
+                        onKeyDown={(e) => {
+                            // 中文输入法选词时的回车不能当发送
+                            if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+                                e.preventDefault();
+                                sendChat();
+                            }
+                        }}
+                        placeholder={paused ? '你说话的时候，大家都在等你' : '跟牌桌上说点什么'}
+                        className="flex-1 min-w-0 h-9 px-3 rounded-xl bg-white/10 text-[12.5px] text-white placeholder:text-emerald-200/40 outline-none focus:bg-white/15"
+                    />
+                    <button
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={sendChat}
+                        disabled={!chatDraft.trim()}
+                        className={`shrink-0 h-9 px-3 rounded-xl text-[12px] font-black cursor-pointer ${chatDraft.trim() ? 'bg-amber-400 text-amber-950' : 'bg-white/5 text-white/30'}`}
+                    >
+                        发送
+                    </button>
+                </div>
+            </div>
+
             {/* 结算浮层 */}
             {over && (
                 <div className="absolute inset-0 z-20 bg-black/70 backdrop-blur-sm flex items-center justify-center px-6">
@@ -845,6 +1042,9 @@ export default function DoudizhuApp({ onBack }: Props) {
                         )}
 
                         <div className="mt-3 space-y-2">
+                            {tableChat.length > 0 && (
+                                <p className="text-[10px] text-slate-400 text-center">牌桌上的 {tableChat.length} 句对话会一起转过去</p>
+                            )}
                             <button onClick={forwardReport} className="w-full py-2.5 rounded-xl bg-emerald-600 text-white text-[13px] font-black cursor-pointer">
                                 📤 转发战报到聊天
                             </button>
