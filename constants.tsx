@@ -39,6 +39,7 @@ import {
   HouseLine,
   Feather,
   ArrowsLeftRight,
+  DiceFive,
 } from '@phosphor-icons/react';
 
 // SVG 图标库 - Phosphor Icons
@@ -61,6 +62,7 @@ export const Icons: Record<string, React.FC<{ className?: string }>> = {
   Study: ({ className }) => <Books className={className} weight="regular" />,
   FAQ: ({ className }) => <Question className={className} weight="regular" />,
   Game: ({ className }) => <GameController className={className} weight="regular" />,
+  GameHub: ({ className }) => <DiceFive className={className} weight="regular" />,
   Worldbook: ({ className }) => <Globe className={className} weight="regular" />,
   Novel: ({ className }) => <PenNib className={className} weight="regular" />,
   Bank: ({ className }) => <PiggyBank className={className} weight="regular" />,
@@ -104,7 +106,7 @@ export const INSTALLED_APPS: AppConfig[] = [
   { id: AppID.Social, name: 'Spark', icon: 'Social', color: 'red' },
   { id: AppID.Study, name: '自习室', icon: 'Study', color: 'emerald' },
   { id: AppID.Game, name: 'TRPG', icon: 'Game', color: 'orange' },
-  // { id: AppID.GameHub, name: '游戏大厅', icon: 'GameHub', color: 'orange' }, // Hidden temporarily, 待做好再放出
+  { id: AppID.GameHub, name: '游戏大厅', icon: 'GameHub', color: 'emerald' },
   { id: AppID.Novel, name: '笔友会', icon: 'Novel', color: 'amber' },
   { id: AppID.Fanwai, name: '拾光', icon: 'Fanwai', color: 'amber' },
   { id: AppID.Songwriting, name: '写歌', icon: 'Songwriting', color: 'fuchsia' },
