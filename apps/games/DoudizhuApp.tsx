@@ -35,6 +35,28 @@ const AI_DELAY = 750;
 const BID_DELAY = 600;
 const MAX_LINES = 14;
 
+// ---------------------------------------------------------------- 角色台词 API
+
+/** 角色台词专属 API（按 charId 存 localStorage，不污染角色的聊天配置）。 */
+interface SpeechApiConfig { baseUrl: string; apiKey: string; model: string }
+const SPEECH_API_KEY = 'ddz_speech_apis';
+
+function loadSpeechApis(): Record<string, SpeechApiConfig> {
+    try {
+        const raw = localStorage.getItem(SPEECH_API_KEY);
+        return raw ? JSON.parse(raw) : {};
+    } catch { return {}; }
+}
+
+function saveSpeechApi(charId: string, cfg: SpeechApiConfig | null): void {
+    try {
+        const all = loadSpeechApis();
+        if (cfg && cfg.baseUrl && cfg.apiKey && cfg.model) all[charId] = cfg;
+        else delete all[charId];
+        localStorage.setItem(SPEECH_API_KEY, JSON.stringify(all));
+    } catch { /* ignore */ }
+}
+
 // ---------------------------------------------------------------- 牌面
 
 function CardFace({ card, size = 'md', raised }: { card: Card; size?: 'xs' | 'sm' | 'md' | 'lg'; raised?: boolean }) {
@@ -88,24 +110,30 @@ export default function DoudizhuApp({ onBack }: Props) {
     const [speech, setSpeech] = useState<Record<string, string>>({});
     const [ended, setEnded] = useState(false);
     const [showReport, setShowReport] = useState(false);
+    /** 台词气泡展开的角色座位（手机上显示不全时点开看全文）。 */
+    const [expandedSeat, setExpandedSeat] = useState<string | null>(null);
+    /** 台词 API 设置面板展开的角色 id。 */
+    const [apiPanelChar, setApiPanelChar] = useState<string | null>(null);
+    /** 台词 API 草稿（编辑中，未保存）。 */
+    const [apiDraft, setApiDraft] = useState<Record<string, SpeechApiConfig>>({});
+    /** 已保存的角色台词 API（charId → 配置）。 */
+    const [speechApis, setSpeechApis] = useState<Record<string, SpeechApiConfig>>(() => loadSpeechApis());
 
     const stateRef = useRef<DdzState | null>(null);
     const seatsRef = useRef<Seat[]>([]);
     const spokenRef = useRef(0);
+    /** 本局出牌过程记录（战报用）。 */
+    const playLogRef = useRef<string[]>([]);
 
     useEffect(() => { stateRef.current = state; }, [state]);
     useEffect(() => { seatsRef.current = seats; }, [seats]);
 
-    const subApi: ApiEndpoint = useMemo(
-        () => ({ baseUrl: apiConfig.subBaseUrl, apiKey: apiConfig.subApiKey, model: apiConfig.subModel }),
-        [apiConfig],
-    );
     const mainApi: ApiEndpoint = useMemo(
         () => ({ baseUrl: apiConfig.baseUrl, apiKey: apiConfig.apiKey, model: apiConfig.model }),
         [apiConfig],
     );
-    const apiRef = useRef({ subApi, mainApi });
-    useEffect(() => { apiRef.current = { subApi, mainApi }; }, [subApi, mainApi]);
+    const apiRef = useRef({ mainApi, characters, speechApis });
+    useEffect(() => { apiRef.current = { mainApi, characters, speechApis }; }, [mainApi, characters, speechApis]);
 
     // ---- 开局（keepSeats=true 时沿用同一批对手，只有换桌才重新挑人）
 
@@ -138,7 +166,9 @@ export default function DoudizhuApp({ onBack }: Props) {
         setSpeech({});
         setEnded(false);
         setShowReport(false);
+        setExpandedSeat(null);
         spokenRef.current = 0;
+        playLogRef.current = [];
         setView('play');
     };
 
@@ -157,17 +187,38 @@ export default function DoudizhuApp({ onBack }: Props) {
         return `你是${role}，手里 ${mine} 张；${others}；${last}`;
     };
 
+    /**
+     * 台词 API 优先级：角色在游戏里单独设置的 API → 角色自带的专属对话 API
+     * （CharacterProfile.dialogueApi，聊天设置里配过的）→ 主 API。不走副 API。
+     */
+    const resolveSpeechEndpoint = (seat: Seat): ApiEndpoint | null => {
+        const { mainApi: main, characters: chars, speechApis: saved } = apiRef.current;
+        const custom = seat.charId ? saved[seat.charId] : null;
+        if (custom?.baseUrl && custom.apiKey && custom.model) return custom;
+        const char = seat.charId ? chars.find((c) => c.id === seat.charId) : null;
+        const d = char?.dialogueApi;
+        if (d?.baseUrl && d.apiKey && d.model) return { baseUrl: d.baseUrl, apiKey: d.apiKey, model: d.model };
+        if (main.baseUrl && main.apiKey && main.model) return main;
+        return null;
+    };
+
+    /** 记一笔对局过程（战报 transcript）。 */
+    const logLine = (nameOf: (id: string) => string, s: DdzState, pid: string, what: string) => {
+        playLogRef.current.push(`第${playLogRef.current.length + 1}手 ${nameOf(pid)}：${what}`);
+        void s;
+    };
+
     const maybeSpeak = async (pid: string, s: DdzState, fallback: string) => {
         if (!pid || !fallback) return;
         if (spokenRef.current >= MAX_LINES) return;
         if (Math.random() > 0.35) return;
         const seat = seatsRef.current.find((x) => x.id === pid);
         if (!seat || seat.isUser) return;
-        const { subApi: sub, mainApi: main } = apiRef.current;
-        if (!sub.baseUrl || !sub.apiKey || !sub.model) return;
+        const endpoint = resolveSpeechEndpoint(seat);
+        if (!endpoint) return;
         spokenRef.current += 1;
         try {
-            const res = await callGameApi(sub, main, true, {
+            const res = await callGameApi(endpoint, endpoint, false, {
                 system: [
                     `你正在和用户一起打斗地主，你是「${seat.name}」。`,
                     seat.persona ? `你的人设：${seat.persona}` : '',
@@ -205,20 +256,24 @@ export default function DoudizhuApp({ onBack }: Props) {
 
             let next: DdzState | null = null;
             let line = '';
+            let logWhat = '';
             try {
                 if (prev.phase === 'bidding') {
                     const bid = chooseBid(prev.hands[pid] || [], prev.currentBid, prev.bidTurns >= 2);
                     next = applyBid(prev, pid, bid);
                     line = bid === 0 ? '不叫。' : `我叫 ${bid} 分。`;
+                    logWhat = bid === 0 ? '不叫' : `叫 ${bid} 分`;
                 } else {
                     const decision = choosePlay(prev, pid);
                     next = applyPlay(prev, pid, decision.action, decision.cards);
                     line = decision.speech;
+                    logWhat = decision.action === 'pass' ? '不出' : `出 ${decision.cards.join(' ')}`;
                 }
             } catch {
                 try {
                     next = applyPlay(prev, pid, 'pass', []);
                     line = '这手先不要。';
+                    logWhat = '不出';
                 } catch {
                     next = null;
                 }
@@ -226,6 +281,8 @@ export default function DoudizhuApp({ onBack }: Props) {
             if (!next) return;
             setState(next);
             stateRef.current = next;
+            const nameOf = (id: string) => seatsRef.current.find((x) => x.id === id)?.name || id;
+            logLine(nameOf, next, pid, logWhat);
             if (line) setSpeech((s) => ({ ...s, [pid]: line }));
             void maybeSpeak(pid, next, line);
         }, state.phase === 'bidding' ? BID_DELAY : AI_DELAY);
@@ -273,6 +330,7 @@ export default function DoudizhuApp({ onBack }: Props) {
             const next = applyPlay(state, 'user', 'play', selected);
             setState(next);
             stateRef.current = next;
+            playLogRef.current.push(`第${playLogRef.current.length + 1}手 ${meName()}：出 ${selected.join(' ')}`);
             setSelected([]);
         } catch (e: any) {
             addToast(e?.message || '这手牌出不了', 'error');
@@ -285,6 +343,7 @@ export default function DoudizhuApp({ onBack }: Props) {
             const next = applyPlay(state, 'user', 'pass', []);
             setState(next);
             stateRef.current = next;
+            playLogRef.current.push(`第${playLogRef.current.length + 1}手 ${meName()}：不出`);
             setSelected([]);
         } catch (e: any) {
             addToast(e?.message || '现在不能不出', 'error');
@@ -296,8 +355,12 @@ export default function DoudizhuApp({ onBack }: Props) {
         const next = applyBid(state, 'user', bid);
         setState(next);
         stateRef.current = next;
+        playLogRef.current.push(`第${playLogRef.current.length + 1}手 ${meName()}：${bid === 0 ? '不叫' : `叫 ${bid} 分`}`);
         setSelected([]);
     };
+
+    /** 我的座位名（战报里用昵称）。 */
+    const meName = () => seatsRef.current.find((s) => s.id === 'user')?.name || '我';
 
     const hint = () => {
         if (!state) return;
@@ -329,6 +392,15 @@ export default function DoudizhuApp({ onBack }: Props) {
         ].join('\n');
     }, [state, seats]);
 
+    /** 卡片副标题（一行概括，聊天里不展开也能看到）。 */
+    const reportSubtitle = useMemo(() => {
+        if (!state || state.phase !== 'over') return '';
+        const nameOf = (id: string | null) => seats.find((s) => s.id === id)?.name || '未知';
+        const landlordWon = state.winner === state.landlord;
+        return `${landlordWon ? '地主方胜' : '农民方胜'} · ${nameOf(state.winner)}先出完 · 炸弹 ${bombs(state)} 次 · ${playLogRef.current.length} 手`;
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [state, seats]);
+
     const forwardReport = async () => {
         if (!state || state.phase !== 'over') return;
         const targets = seats.filter((s) => s.charId);
@@ -337,15 +409,29 @@ export default function DoudizhuApp({ onBack }: Props) {
             return;
         }
         const ts = Date.now();
+        const transcript = playLogRef.current.join('\n');
+        const nameOf = (id: string | null) => seats.find((s) => s.id === id)?.name || '未知';
+        // 内容给模型看：完整战报 + 过程，让角色明确「刚和用户打了一局斗地主」。
+        const fullContent = transcript
+            ? `${reportText}\n\n对局过程（你我同桌）：\n${transcript}`
+            : reportText;
         for (const seat of targets) {
             await DB.saveMessage({
                 charId: seat.charId!,
                 role: 'user',
                 type: 'game_replay',
-                content: reportText,
+                content: fullContent,
                 metadata: {
                     game: '斗地主',
+                    subtitle: reportSubtitle,
+                    rounds: playLogRef.current.length,
+                    playerCount: seats.length,
+                    mvp: nameOf(state.winner),
+                    transcript,
                     summary: reportText,
+                    myRole: state.landlord === seat.id ? '地主' : '农民',
+                    landlordName: nameOf(state.landlord),
+                    winnerName: nameOf(state.winner),
                     charIds: targets.map((t) => t.charId),
                     charNames: targets.map((t) => t.name),
                     ts,
@@ -361,6 +447,36 @@ export default function DoudizhuApp({ onBack }: Props) {
             if (prev.length >= 2) return [...prev.slice(1), id];
             return [...prev, id];
         });
+    };
+
+    /** 打开某角色的台词 API 面板：预填已保存的 → 角色自带 dialogueApi → 空。 */
+    const openApiPanel = (charId: string) => {
+        if (apiPanelChar === charId) {
+            setApiPanelChar(null);
+            return;
+        }
+        const char = characters.find((c) => c.id === charId);
+        const saved = speechApis[charId];
+        const d = char?.dialogueApi;
+        const preset = saved || (d?.baseUrl && d.apiKey && d.model ? { baseUrl: d.baseUrl, apiKey: d.apiKey, model: d.model } : { baseUrl: '', apiKey: '', model: '' });
+        setApiDraft((prev) => ({ ...prev, [charId]: { ...preset } }));
+        setApiPanelChar(charId);
+    };
+
+    const persistApiDraft = (charId: string) => {
+        const cfg = apiDraft[charId];
+        if (!cfg) return;
+        saveSpeechApi(charId, cfg);
+        setSpeechApis(loadSpeechApis());
+        setApiPanelChar(null);
+        addToast('已保存该角色的专属台词 API', 'success');
+    };
+
+    const clearApiDraft = (charId: string) => {
+        saveSpeechApi(charId, null);
+        setSpeechApis(loadSpeechApis());
+        setApiPanelChar(null);
+        addToast('已清除，回退角色专属对话 API 或主 API', 'info');
     };
 
     // ---------------------------------------------------------------- setup
@@ -423,6 +539,57 @@ export default function DoudizhuApp({ onBack }: Props) {
                         先出完手牌的一方获胜；炸弹和王炸会让本局倍数翻倍。
                     </div>
 
+                    {picked.length > 0 && (
+                        <div>
+                            <h3 className="text-sm font-bold text-slate-800">台词 API（可选）</h3>
+                            <p className="text-[11px] text-slate-400 mt-0.5 mb-2">
+                                给每个角色单独配打牌时的说话模型；不填则依次回退角色的专属对话 API、主 API。
+                            </p>
+                            <div className="space-y-2">
+                                {picked.map((cid) => {
+                                    const c = characters.find((x) => x.id === cid);
+                                    if (!c) return null;
+                                    const saved = speechApis[cid];
+                                    const open = apiPanelChar === cid;
+                                    const draft = apiDraft[cid];
+                                    return (
+                                        <div key={cid} className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+                                            <button onClick={() => openApiPanel(cid)} className="w-full flex items-center gap-2 px-3 py-2.5 cursor-pointer hover:bg-slate-50">
+                                                <span className="w-7 h-7 rounded-full bg-violet-200 flex items-center justify-center text-xs font-bold text-violet-700 shrink-0 overflow-hidden">
+                                                    {c.avatar ? <img src={c.avatar} className="w-full h-full object-cover" alt="" /> : c.name.slice(0, 1)}
+                                                </span>
+                                                <span className="text-[13px] font-bold text-slate-700">{c.name} 的台词 API</span>
+                                                <span className={`ml-auto text-[10px] px-1.5 py-0.5 rounded-full shrink-0 ${saved ? 'bg-emerald-100 text-emerald-700 font-bold' : 'bg-slate-100 text-slate-400'}`}>
+                                                    {saved ? '已单独设置' : '跟随默认'}
+                                                </span>
+                                                <span className="text-slate-400 text-xs shrink-0">{open ? '▴' : '▾'}</span>
+                                            </button>
+                                            {open && draft && (
+                                                <div className="px-3 pb-3 pt-1 space-y-2 border-t border-slate-100">
+                                                    {(['baseUrl', 'apiKey', 'model'] as const).map((field) => (
+                                                        <input
+                                                            key={field}
+                                                            value={draft[field]}
+                                                            onChange={(e) => setApiDraft((prev) => ({ ...prev, [cid]: { ...draft, [field]: e.target.value } }))}
+                                                            placeholder={field === 'baseUrl' ? 'API 地址（如 https://api.xxx.com/v1）' : field === 'apiKey' ? 'API Key' : '模型名'}
+                                                            className="w-full px-2.5 py-2 rounded-lg bg-slate-50 border border-slate-200 text-[12px] text-slate-700 outline-none focus:border-emerald-400"
+                                                        />
+                                                    ))}
+                                                    <div className="flex gap-2">
+                                                        <button onClick={() => persistApiDraft(cid)} className="flex-1 py-2 rounded-lg bg-emerald-600 text-white text-[12px] font-black cursor-pointer">保存</button>
+                                                        {saved && (
+                                                            <button onClick={() => clearApiDraft(cid)} className="px-3 py-2 rounded-lg bg-slate-100 text-slate-500 text-[12px] font-bold cursor-pointer">清除</button>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    )}
+
                     <button
                         onClick={() => startGame(false)}
                         disabled={!enough}
@@ -474,9 +641,16 @@ export default function DoudizhuApp({ onBack }: Props) {
                 <div className="mt-1.5 flex gap-[2px] overflow-hidden">
                     {Array.from({ length: Math.min(count, 7) }).map((_, i) => <CardBack key={i} size="sm" dim={!active} />)}
                 </div>
-                <div className="h-8 mt-1">
+                <div className="mt-1 min-h-8">
                     {line && (
-                        <p className="text-[10px] leading-snug text-amber-100 bg-black/25 rounded-lg px-1.5 py-1 line-clamp-2">{line}</p>
+                        <button
+                            onClick={() => setExpandedSeat((cur) => (cur === seat.id ? null : seat.id))}
+                            className="w-full text-left cursor-pointer"
+                        >
+                            <p className={`text-[10px] leading-snug text-amber-100 bg-black/25 rounded-lg px-1.5 py-1 ${expandedSeat === seat.id ? 'max-h-24 overflow-y-auto' : 'line-clamp-2'}`}>
+                                {expandedSeat === seat.id ? line : (line.length > 24 ? `${line.slice(0, 24)}… 点击看全文` : line)}
+                            </p>
+                        </button>
                     )}
                 </div>
             </div>
