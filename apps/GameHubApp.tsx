@@ -2,14 +2,15 @@ import React, { useState } from 'react';
 import { useOS } from '../context/OSContext';
 import { loadGameStats } from '../utils/games/gameStore';
 import CharadesApp from './games/CharadesApp';
+import DoudizhuApp from './games/DoudizhuApp';
 
 /**
  * 游戏大厅（MyGame）—— 小游戏合集入口。
- * 首个内置游戏「你说我猜」，后续游戏注册表式扩展。
+ * 内置「你说我猜」「斗地主」，后续游戏注册表式扩展。
  */
 export default function GameHubApp() {
     const { closeApp } = useOS();
-    const [active, setActive] = useState<'hub' | 'charades'>('hub');
+    const [active, setActive] = useState<'hub' | 'charades' | 'doudizhu'>('hub');
     const stats = loadGameStats();
 
     return (
@@ -48,6 +49,23 @@ export default function GameHubApp() {
                             </div>
                         </button>
 
+                        <button onClick={() => setActive('doudizhu')}
+                            className="w-full p-4 rounded-2xl bg-gradient-to-br from-emerald-50 to-teal-50 border border-emerald-200 text-left cursor-pointer hover:border-emerald-400 transition-colors active:scale-[0.99]">
+                            <div className="flex items-center gap-3">
+                                <span className="w-11 h-11 rounded-xl bg-emerald-600 flex items-center justify-center text-2xl shadow-sm">🃏</span>
+                                <div className="flex-1">
+                                    <p className="text-[15px] font-black text-slate-800">斗地主</p>
+                                    <p className="text-[11px] text-slate-500 mt-0.5">三人一桌 · 叫分抢先手 · 和角色同场</p>
+                                </div>
+                                <span className="text-slate-400">›</span>
+                            </div>
+                            <div className="flex gap-2 mt-2">
+                                <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/70 text-slate-500">54 张</span>
+                                <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/70 text-slate-500">炸弹翻倍</span>
+                                <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/70 text-slate-500">本地规则</span>
+                            </div>
+                        </button>
+
                         <div className="w-full p-4 rounded-2xl bg-slate-100 border border-slate-200 opacity-60">
                             <div className="flex items-center gap-3">
                                 <span className="w-11 h-11 rounded-xl bg-slate-300 flex items-center justify-center text-2xl">⚔️</span>
@@ -59,8 +77,10 @@ export default function GameHubApp() {
                         </div>
                     </div>
                 </>
-            ) : (
+            ) : active === 'charades' ? (
                 <CharadesApp onBack={() => setActive('hub')} />
+            ) : (
+                <DoudizhuApp onBack={() => setActive('hub')} />
             )}
         </div>
     );
