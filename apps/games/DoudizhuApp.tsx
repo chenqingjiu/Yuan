@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useOS } from '../../context/OSContext';
 import { DB } from '../../utils/db';
+import { CharAvatar } from '../../components/games/CharAvatar';
 import { callGameApi, type ApiEndpoint } from '../../utils/games/gameApi';
 import { createNpcs } from '../../utils/games/npcPool';
 import { chooseBid, choosePlay, suggestPlay } from '../../utils/games/doudizhu/ai';
@@ -609,7 +610,7 @@ export default function DoudizhuApp({ onBack }: Props) {
                                             className={`flex items-center gap-2 p-2.5 rounded-xl border text-left cursor-pointer transition-colors ${on ? 'bg-emerald-50 border-emerald-300' : 'bg-white border-slate-200 hover:border-slate-300'}`}
                                         >
                                             <span className="w-7 h-7 rounded-full bg-violet-200 flex items-center justify-center text-xs font-bold text-violet-700 shrink-0 overflow-hidden">
-                                                {c.avatar ? <img src={c.avatar} className="w-full h-full object-cover" alt="" /> : c.name.slice(0, 1)}
+                                                <CharAvatar value={c.avatar} name={c.name} imgClassName="w-full h-full object-cover" fallbackClassName="text-xs font-bold text-violet-700" />
                                             </span>
                                             <span className="text-[13px] font-bold text-slate-700 truncate">{c.name}</span>
                                             <span className={`ml-auto w-4 h-4 rounded-full border flex items-center justify-center shrink-0 ${on ? 'border-emerald-500' : 'border-slate-300'}`}>
@@ -644,7 +645,7 @@ export default function DoudizhuApp({ onBack }: Props) {
                                         <div key={cid} className="rounded-xl border border-slate-200 bg-white overflow-hidden">
                                             <button onClick={() => openApiPanel(cid)} className="w-full flex items-center gap-2 px-3 py-2.5 cursor-pointer hover:bg-slate-50">
                                                 <span className="w-7 h-7 rounded-full bg-violet-200 flex items-center justify-center text-xs font-bold text-violet-700 shrink-0 overflow-hidden">
-                                                    {c.avatar ? <img src={c.avatar} className="w-full h-full object-cover" alt="" /> : c.name.slice(0, 1)}
+                                                    <CharAvatar value={c.avatar} name={c.name} imgClassName="w-full h-full object-cover" fallbackClassName="text-xs font-bold text-violet-700" />
                                                 </span>
                                                 <span className="text-[13px] font-bold text-slate-700">{c.name} 的聊天 API</span>
                                                 <span className={`ml-auto text-[10px] px-1.5 py-0.5 rounded-full shrink-0 ${saved ? 'bg-emerald-100 text-emerald-700 font-bold' : 'bg-slate-100 text-slate-400'}`}>
@@ -714,7 +715,7 @@ export default function DoudizhuApp({ onBack }: Props) {
                 <div className="flex items-center gap-2">
                     <span className="w-8 h-8 rounded-full overflow-hidden bg-emerald-700 flex items-center justify-center text-[11px] font-bold text-white shrink-0"
                         style={seat.hue != null ? { background: `hsl(${seat.hue},45%,42%)` } : undefined}>
-                        {seat.avatar ? <img src={seat.avatar} className="w-full h-full object-cover" alt="" /> : seat.name.slice(0, 1)}
+                        <CharAvatar value={seat.avatar} name={seat.name} imgClassName="w-full h-full object-cover" fallbackClassName="text-[11px] font-bold text-white" />
                     </span>
                     <div className="min-w-0">
                         <div className="flex items-center gap-1">

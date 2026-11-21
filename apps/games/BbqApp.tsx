@@ -45,6 +45,7 @@ import {
     type RivalAttack,
     type Skewer,
 } from '../../utils/games/bbq/engine';
+import { CharAvatar } from '../../components/games/CharAvatar';
 import { callGameApi, type ApiEndpoint } from '../../utils/games/gameApi';
 import {
     buildAttackPrompt,
@@ -179,7 +180,7 @@ function RivalPanel({ state, now }: { state: BbqState; now: number }) {
         <div className="flex-1 min-h-0 flex flex-col px-2.5 py-2 gap-1.5">
             <div className="flex items-center gap-2">
                 <div className={`w-9 h-9 rounded-full overflow-hidden bg-slate-700 ring-1 shrink-0 ${hurt ? 'ring-red-400/70' : 'ring-white/20'}`}>
-                    {r.avatar ? <img src={r.avatar} alt="" className="w-full h-full object-cover" draggable={false} /> : <div className="w-full h-full flex items-center justify-center text-sm">{r.name.slice(0, 1)}</div>}
+                    <CharAvatar value={r.avatar} name={r.name} imgClassName="w-full h-full object-cover" fallbackClassName="w-full h-full flex items-center justify-center text-sm" />
                 </div>
                 <div className="min-w-0">
                     <p className="text-[11px] font-black text-white truncate leading-tight">{r.name} 的摊</p>
@@ -572,7 +573,7 @@ export default function BbqApp({ onBack }: Props) {
                                             className={`flex items-center gap-2 p-2.5 rounded-xl border text-left cursor-pointer transition-colors ${on ? 'bg-amber-50 border-amber-300' : 'bg-white border-slate-200'}`}
                                         >
                                             <span className="w-8 h-8 rounded-full bg-amber-200 flex items-center justify-center text-xs font-bold text-amber-800 shrink-0 overflow-hidden">
-                                                {c.avatar ? <img src={c.avatar} className="w-full h-full object-cover" alt="" /> : c.name.slice(0, 1)}
+                                                <CharAvatar value={c.avatar} name={c.name} imgClassName="w-full h-full object-cover" fallbackClassName="text-xs font-bold text-amber-800" />
                                             </span>
                                             <span className="text-[13px] font-bold text-slate-700 truncate">{c.name}</span>
                                             <span className={`ml-auto w-4 h-4 rounded-full border flex items-center justify-center shrink-0 ${on ? 'border-amber-500' : 'border-slate-300'}`}>
