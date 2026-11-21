@@ -171,10 +171,13 @@ describe('客人', () => {
 
     it('同时最多三个客人', () => {
         let s = createGame({ now: T0, rivalName: '苏利', rand: even });
-        for (let t = 0; t < 60000; t += 200) s = tick(s, T0 + t, even);
-        const waiting = s.orders.filter((x) => x.status === 'waiting').length;
-        expect(waiting).toBeLessThanOrEqual(3);
-        expect(waiting).toBe(3);
+        let peak = 0;
+        for (let t = 0; t < 60000; t += 200) {
+            s = tick(s, T0 + t, even);
+            peak = Math.max(peak, s.orders.filter((x) => x.status === 'waiting').length);
+        }
+        expect(peak).toBeLessThanOrEqual(3);
+        expect(peak).toBe(3);
     });
 });
 

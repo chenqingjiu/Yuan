@@ -68,7 +68,7 @@ function RotateHint({ onFullscreen }: { onFullscreen: () => void }) {
 function GuestCardItem({ o, now }: { o: BbqState['orders'][number]; now: number }) {
     const left = o.patience - (now - o.bornAt);
     const ratio = Math.max(0, Math.min(1, left / o.patience));
-    const urgent = ratio < 0.3;
+    const urgent = ratio < 0.35;
     const meat = foodOf(o.meat);
     const eatDone = o.status !== 'waiting';
 
@@ -98,7 +98,7 @@ function GuestCardItem({ o, now }: { o: BbqState['orders'][number]; now: number 
                     )}
                     {urgent && <span className="text-[9px] text-red-300 font-black ml-1">催！</span>}
                 </div>
-                <div className="h-1 mt-1 rounded-full bg-black/40 overflow-hidden">
+                <div className="h-1.5 mt-1 rounded-full bg-black/40 overflow-hidden">
                     <div
                         className={`h-full transition-[width] duration-100 ${urgent ? 'bg-red-500' : 'bg-amber-400'}`}
                         style={{ width: `${ratio * 100}%` }}

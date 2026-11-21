@@ -170,7 +170,7 @@ export function createGame(opts: {
             perfect: 0,
             burned: 0,
             taskStartedAt: opts.now,
-            taskMs: 8200,
+            taskMs: 11500,
             frozenUntil: 0,
             lureUntil: 0,
             forceBurn: false,
@@ -268,10 +268,10 @@ export function tick(state: BbqState, now: number, rand: () => number = Math.ran
             guest: Math.floor(rand() * 4),
             meat, veg, spicy,
             bornAt: now,
-            patience: 13000 + Math.floor(rand() * 6000),
+            patience: 22000 + Math.floor(rand() * 8000),
             status: 'waiting',
         }];
-        s.nextGuestAt = now + 4200 + Math.floor(rand() * 2600);
+        s.nextGuestAt = now + 8500 + Math.floor(rand() * 3000);
     }
 
     // 对手干活
@@ -313,7 +313,7 @@ function tickRival(r: Rival, now: number, rand: () => number): Rival {
     n.forceBad = false;
     n.forceBurn = false;
     n.taskStartedAt = now;
-    n.taskMs = 7500 + Math.floor(rand() * 3000);
+    n.taskMs = 9500 + Math.floor(rand() * 3500);
     return n;
 }
 
