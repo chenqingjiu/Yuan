@@ -13,28 +13,45 @@ import {
     foodOf,
 } from '../../utils/games/bbq/assets';
 import {
+    ATTACK_COUNT,
     ITEMS,
     ROUND_MS,
     SLOT_COUNT,
+    applyRivalAttack,
+    attacksLeft,
     canFlip,
     canServe,
     cookProgress,
     createGame,
     discard,
     flip,
+    meatName,
+    nextAttackAt,
     pickFood,
     pickSpicy,
     placeOnGrill,
     remainMs,
     serve,
     skewerState,
+    skipRivalAttack,
     summary,
     tick,
+    timeline,
+    timelineText,
     useItem,
+    vegName,
     type BbqState,
     type ItemId,
+    type RivalAttack,
     type Skewer,
 } from '../../utils/games/bbq/engine';
+import { callGameApi, type ApiEndpoint } from '../../utils/games/gameApi';
+import {
+    buildAttackPrompt,
+    localDecide,
+    parseAttackReply,
+    type AttackContext,
+} from '../../utils/games/bbq/rivalBrain';
 
 interface Props {
     onBack: () => void;
@@ -88,15 +105,19 @@ function GuestCardItem({ o, now }: { o: BbqState['orders'][number]; now: number 
                     <img src={foodOf(o.veg).image} alt="" className="w-4 h-4 object-contain ml-0.5" draggable={false} />
                     <span className="text-[9px] text-slate-300 truncate">{foodOf(o.veg).name}</span>
                 </div>
-                <div className="flex items-center gap-0.5 mt-0.5">
-                    {o.spicy === 0 ? (
-                        <span className="text-[9px] text-emerald-300">不辣</span>
-                    ) : (
-                        Array.from({ length: o.spicy }).map((_, i) => (
-                            <img key={i} src={CHILI_ICON} alt="" className="w-3.5 h-3.5 object-contain" draggable={false} />
-                        ))
-                    )}
-                    {urgent && <span className="text-[9px] text-red-300 font-black ml-1">催！</span>}
+                <div className="flex items-center gap-1 mt-0.5">
+                    <span
+                        className={`text-[9px] font-black px-1 rounded leading-[14px] ${
+                            o.spicy === 0
+                                ? 'text-emerald-300 bg-emerald-500/15'
+                                : o.spicy === 1
+                                    ? 'text-amber-300 bg-amber-500/15'
+                                    : 'text-red-300 bg-red-500/20'
+                        }`}
+                    >
+                        {SPICY_LABEL[o.spicy]}
+                    </span>
+                    {urgent && <span className="text-[9px] text-red-300 font-black">催！</span>}
                 </div>
                 <div className="h-1.5 mt-1 rounded-full bg-black/40 overflow-hidden">
                     <div
@@ -152,11 +173,12 @@ function RivalPanel({ state, now }: { state: BbqState; now: number }) {
     const lured = now < r.lureUntil;
     const busy = !frozen && now - r.taskStartedAt < r.taskMs;
     const showLine = r.line && now - r.lineAt < 4200;
+    const hurt = frozen || lured || r.forceBurn || r.forceBad;
 
     return (
         <div className="flex-1 min-h-0 flex flex-col px-2.5 py-2 gap-1.5">
             <div className="flex items-center gap-2">
-                <div className="w-9 h-9 rounded-full overflow-hidden bg-slate-700 ring-1 ring-white/20 shrink-0">
+                <div className={`w-9 h-9 rounded-full overflow-hidden bg-slate-700 ring-1 shrink-0 ${hurt ? 'ring-red-400/70' : 'ring-white/20'}`}>
                     {r.avatar ? <img src={r.avatar} alt="" className="w-full h-full object-cover" draggable={false} /> : <div className="w-full h-full flex items-center justify-center text-sm">{r.name.slice(0, 1)}</div>}
                 </div>
                 <div className="min-w-0">
@@ -165,7 +187,7 @@ function RivalPanel({ state, now }: { state: BbqState; now: number }) {
                 </div>
             </div>
 
-            <div className="rounded-lg bg-white/[0.06] px-2 py-1.5">
+            <div className={`rounded-lg px-2 py-1.5 transition-colors ${frozen ? 'bg-red-950/60 ring-1 ring-red-500/50' : 'bg-white/[0.06]'}`}>
                 <p className="text-[9px] text-slate-400">今晚营业额</p>
                 <p className="text-xl font-black text-sky-300 leading-tight">¥{r.money}</p>
                 <p className="text-[9px] text-slate-400 mt-0.5">
@@ -174,14 +196,26 @@ function RivalPanel({ state, now }: { state: BbqState; now: number }) {
             </div>
 
             <div className={`text-[10px] font-bold ${frozen ? 'text-red-300' : busy ? 'text-emerald-300' : 'text-amber-300'}`}>
-                {now < r.frozenUntil ? `熄火中 ${Math.ceil((r.frozenUntil - now) / 1000)}s` : now - r.taskStartedAt < r.taskMs ? '正在烤…' : '在等下一桌'}
+                {frozen
+                    ? `熄火中 ${Math.ceil((r.frozenUntil - now) / 1000)}s`
+                    : busy
+                        ? `正在烤 ${meatName(r.dish.meat)}${vegName(r.dish.veg)}`
+                        : '在等下一桌'}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-1">
+                <span className="text-[9px] text-slate-400">
+                    捣乱牌 <span className="text-amber-300 font-black">{attacksLeft(r)}</span>/{ATTACK_COUNT}
+                </span>
+                {r.forceBurn && <span className="text-[9px] text-orange-300">火被你扇旺了</span>}
+                {r.forceBad && <span className="text-[9px] text-pink-300">调料被你动了</span>}
             </div>
             {lured && <div className="text-[9px] text-orange-300">客人被你的喇叭喊走了</div>}
 
             <div className="flex-1" />
 
             {showLine && (
-                <div className="shrink-0 relative rounded-lg rounded-bl-none bg-[#f5f4ef] text-[#2a2f3a] text-[10px] leading-snug px-2 py-1.5 font-bold break-words">
+                <div className="shrink-0 relative rounded-lg rounded-bl-none bg-[#f5f4ef] text-[#2a2f3a] text-[10px] leading-snug px-2 py-1.5 font-bold break-words animate-[fadeIn_0.18s_ease-out]">
                     {r.line}
                 </div>
             )}
@@ -195,7 +229,11 @@ function ItemBar({ state, now, onUse }: { state: BbqState; now: number; onUse: (
     return (
         <div className="shrink-0 px-2 pb-1.5">
             <div className="flex items-center gap-1 mb-0.5">
-                <span className="text-[9px] text-slate-400">捣乱能量</span>
+                <span className="text-[9px] text-slate-400">捣乱</span>
+                <span className="text-[9px] font-black text-amber-300">
+                    {ATTACK_COUNT - state.itemUses}<span className="text-slate-500 font-bold">/{ATTACK_COUNT}</span>
+                </span>
+                <span className="text-[9px] text-slate-400 ml-1">能量</span>
                 <div className="flex gap-0.5">
                     {Array.from({ length: 5 }).map((_, i) => (
                         <span key={i} className={`w-2 h-2 rounded-sm ${i < state.energy ? 'bg-amber-400' : 'bg-white/15'}`} />
@@ -204,7 +242,7 @@ function ItemBar({ state, now, onUse }: { state: BbqState; now: number; onUse: (
             </div>
             <div className="grid grid-cols-5 gap-1">
                 {ITEMS.map((it) => {
-                    const ok = state.energy >= it.cost;
+                    const ok = state.energy >= it.cost && state.itemUses < ATTACK_COUNT;
                     return (
                         <button
                             key={it.id}
@@ -228,7 +266,7 @@ function ItemBar({ state, now, onUse }: { state: BbqState; now: number; onUse: (
 }
 
 export default function BbqApp({ onBack }: Props) {
-    const { characters, userProfile, addToast } = useOS();
+    const { characters, userProfile, apiConfig, addToast } = useOS();
     const rootRef = useRef<HTMLDivElement>(null);
     const [view, setView] = useState<'setup' | 'play'>('setup');
     const [rivalId, setRivalId] = useState<string>(() => characters[0]?.id || '');
@@ -237,6 +275,20 @@ export default function BbqApp({ onBack }: Props) {
     const [landscape, setLandscape] = useState(true);
     const [forwarded, setForwarded] = useState(false);
     const [showReport, setShowReport] = useState(false);
+    /** 这一次攻击正在问模型（避免同一张牌重复请求） */
+    const askingRef = useRef('');
+    /** 已经决定好、等时间到就执行 */
+    const pendingRef = useRef<{ at: number; attack: RivalAttack | null; line: string } | null>(null);
+    /** 主循环里读最新局面，避免闭包拿到旧的 */
+    const gameRef = useRef<BbqState | null>(null);
+    useEffect(() => { gameRef.current = game; }, [game]);
+
+    const endpoint: ApiEndpoint | null = useMemo(
+        () => (apiConfig?.baseUrl && apiConfig?.apiKey && apiConfig?.model
+            ? { baseUrl: apiConfig.baseUrl, apiKey: apiConfig.apiKey, model: apiConfig.model }
+            : null),
+        [apiConfig],
+    );
 
     // 横屏检测
     useEffect(() => {
@@ -258,17 +310,6 @@ export default function BbqApp({ onBack }: Props) {
         };
     }, [view]);
 
-    // 主循环：100ms 推一次
-    useEffect(() => {
-        if (view !== 'play' || !game || game.phase === 'over') return;
-        const id = setInterval(() => {
-            const t = Date.now();
-            setNow(t);
-            setGame((g) => (g && g.phase === 'playing' ? tick(g, t) : g));
-        }, 100);
-        return () => clearInterval(id);
-    }, [view, game?.phase]);
-
     // 预加载
     useEffect(() => {
         [...MEATS, ...VEGS, ...[1, 2, 3, 4].map((i) => ({ image: GUEST_IMG[i - 1] }))].forEach((f) => {
@@ -283,6 +324,127 @@ export default function BbqApp({ onBack }: Props) {
 
     const rival = characters.find((c) => c.id === rivalId) || characters[0];
 
+    /** 把当下局面打包给对手的脑子 */
+    const buildContext = useCallback((s: BbqState): AttackContext => {
+        const waiting = s.orders.filter((o) => o.status === 'waiting');
+        return {
+            rivalName: s.rival.name,
+            persona: rival?.systemPrompt?.slice(0, 160),
+            minute: Math.min(5, Math.floor((s.now - s.startedAt) / 60000) + 1),
+            myMoney: s.money,
+            rivalMoney: s.rival.money,
+            myWaiting: waiting.length,
+            myGrillFull: s.slots.every((x) => x !== null),
+            myServed: s.served,
+            rivalServed: s.rival.served,
+            attacksLeft: attacksLeft(s.rival),
+            hitBy: s.events
+                .filter((e) => e.actor === 'you' && e.kind === 'item')
+                .map((e) => e.text.split(' → ')[0]),
+            myItems: [],
+        };
+    }, [rival?.systemPrompt]);
+
+    /**
+     * 提前 18 秒问一次「这一张打不打」。
+     * 问了 15 秒还没回来 → 本地随机接管，保证到点一定有个结果。
+     */
+    const askRival = useCallback(async (key: string, at: number) => {
+        const s = gameRef.current;
+        if (!s) return;
+        const ctx = buildContext(s);
+        const decideLocal = () => {
+            const d = localDecide(ctx);
+            pendingRef.current = {
+                at,
+                attack: d.use && d.item ? { item: d.item, line: d.line } : null,
+                line: d.line,
+            };
+        };
+
+        if (!endpoint) {
+            // 没配 API：直接走本地，不发请求
+            decideLocal();
+            return;
+        }
+
+        try {
+            const { system, user } = buildAttackPrompt(ctx);
+            const timer = new Promise<null>((resolve) => setTimeout(() => resolve(null), 15000));
+            const req = callGameApi(endpoint, endpoint, false, {
+                system,
+                messages: [{ role: 'user', content: user }],
+                temperature: 0.95,
+                maxTokens: 60,
+                purpose: '夜市烧烤捣乱',
+            }).catch(() => null);
+
+            const res = await Promise.race([req, timer]);
+            if (!res || !res.ok || !res.text) {
+                if (!pendingRef.current) decideLocal();
+                return;
+            }
+            const parsed = parseAttackReply(res.text, ctx.attacksLeft);
+            if (!parsed) {
+                decideLocal();
+                return;
+            }
+            pendingRef.current = {
+                at,
+                attack: parsed.use && parsed.item ? { item: parsed.item, line: parsed.line } : null,
+                line: parsed.line,
+            };
+        } catch {
+            if (!pendingRef.current) decideLocal();
+        } finally {
+            // 请求返回后清掉占位，允许下一张牌再问
+            void key;
+        }
+    }, [buildContext, endpoint]);
+
+    /**
+     * 每 100ms 看一眼：该不该提前问、到点该不该执行。
+     * 放进主循环里，和 tick 同一拍，避免多套定时器打架。
+     */
+    const advance = useCallback((g: BbqState, t: number): BbqState => {
+        let s = g;
+        const r = s.rival;
+        const due = nextAttackAt(r);
+
+        // 到点了：把早就决定好的那张牌打出来
+        // 用当前 due 判断，而不是预取时记下的时刻——你砸他一次，这张牌可能会提前或推后
+        const p = pendingRef.current;
+        if (p && due > 0 && t >= due) {
+            pendingRef.current = null;
+            askingRef.current = '';
+            s = p.attack ? applyRivalAttack(s, p.attack, t) : skipRivalAttack(s, p.line, t);
+        }
+
+        // 进入 18 秒窗口：这一张牌还没问过就现在问（按第几张记，时刻变了也不重复问）
+        const now2 = s.rival;
+        const due2 = nextAttackAt(now2);
+        if (due2 > 0 && now2.attacksUsed < ATTACK_COUNT) {
+            const left = due2 - t;
+            const key = String(now2.attacksUsed);
+            if (left <= 18000 && left > 0 && askingRef.current !== key) {
+                askingRef.current = key;
+                void askRival(key, due2);
+            }
+        }
+        return s;
+    }, [askRival]);
+
+    // 主循环：100ms 推一次（对手那 3 张牌也在这里判定，不再单开定时器）
+    useEffect(() => {
+        if (view !== 'play' || !game || game.phase === 'over') return;
+        const id = setInterval(() => {
+            const t = Date.now();
+            setNow(t);
+            setGame((g) => (g && g.phase === 'playing' ? tick(advance(g, t), t) : g));
+        }, 100);
+        return () => clearInterval(id);
+    }, [view, game?.phase, advance]);
+
     const start = useCallback(() => {
         if (!rival) {
             addToast('还没有角色，先去「神经链接」创建一个', 'info');
@@ -294,6 +456,8 @@ export default function BbqApp({ onBack }: Props) {
         setForwarded(false);
         setShowReport(false);
         setView('play');
+        askingRef.current = '';
+        pendingRef.current = null;
         // 顺手尝试全屏（iOS 会失败，忽略）
         (document.documentElement as any).requestFullscreen?.().catch?.(() => { });
     }, [rival, addToast]);
@@ -332,12 +496,14 @@ export default function BbqApp({ onBack }: Props) {
     const forward = async () => {
         if (!game || !rival) return;
         const sm = summary(game);
-        const transcript = game.log.join('\n');
+        const transcript = timelineText(game);
+        const myHits = game.events.filter((e) => e.actor === 'you' && e.kind === 'item').length;
         const content = [
             `刚和你在夜市各摆了一个烧烤摊，比了五分钟。`,
             sm.win ? `结果：我 ¥${sm.money}，你 ¥${sm.rivalMoney}，我赢你 ¥${sm.diff}。` : sm.draw ? `结果：打平，都是 ¥${sm.money}。` : `结果：我 ¥${sm.money}，你 ¥${sm.rivalMoney}，你赢我 ¥${sm.diff}。`,
             `我一共上了 ${sm.served} 单，其中 ${sm.perfect} 单零失误；糊了 ${sm.burnt} 串，还有 ${sm.missed} 位客人等不及走了。`,
-            sm.rivalBurned ? `你那边糊了 ${sm.rivalBurned} 单，我看见了。` : '',
+            `你那边上了 ${sm.rivalServed} 单${sm.rivalBurned ? `，糊了 ${sm.rivalBurned} 串` : ''}。`,
+            myHits ? `我砸了你 ${myHits} 次，你回敬了我 ${sm.rivalAttacks} 次。` : sm.rivalAttacks ? `你砸了我 ${sm.rivalAttacks} 次。` : '',
             `\n当晚经过：\n${transcript}`,
         ].filter(Boolean).join('\n');
 
@@ -464,7 +630,7 @@ export default function BbqApp({ onBack }: Props) {
                 <div className="shrink-0 flex items-center gap-2 px-2.5 py-1">
                     <div className="flex items-center gap-1 shrink-0">
                         <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
-                        <span className="text-[9px] text-slate-400">你</span>
+                        <span className="text-[9px] text-amber-300/90 font-bold">你</span>
                         <span className="text-[14px] font-black text-amber-300 leading-none">¥{game.money}</span>
                     </div>
                     <div className="relative flex-1 min-w-0 h-[14px] flex items-center">
@@ -473,11 +639,26 @@ export default function BbqApp({ onBack }: Props) {
                         </div>
                         <span className={`absolute inset-0 flex items-center justify-center text-[10px] font-black tabular-nums ${remain < 30000 ? 'text-red-400' : 'text-white/90'}`} style={{ textShadow: '0 1px 2px rgba(0,0,0,0.9)' }}>{fmtTime(remain)}</span>
                     </div>
-                    <div className="flex items-center gap-1 shrink-0 max-w-[38%] pl-2 border-l border-white/10">
-                        <span className="text-[14px] font-black text-sky-300 leading-none shrink-0">¥{game.rival.money}</span>
-                        <span className="text-[9px] text-slate-400 truncate">{game.rival.name}</span>
+                    <div className="flex items-center gap-1 shrink-0 max-w-[42%] pl-2 border-l border-white/10">
+                        <span className="w-1.5 h-1.5 rounded-full bg-sky-400 shrink-0" />
+                        <span className="text-[9px] text-sky-300/90 font-bold truncate max-w-[56px]">{game.rival.name}</span>
+                        <span className="text-[14px] font-black text-sky-300 leading-none">¥{game.rival.money}</span>
                     </div>
                 </div>
+
+                {/* 你身上的负面状态：他砸的 */}
+                {(game.raidUntil > now || game.dousedUntil > now || game.curseNext || game.badNext) && (
+                    <div className="shrink-0 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 px-2.5 pb-1 text-[9px]">
+                        {game.raidUntil > now && (
+                            <span className="text-red-300 font-black">🚨 城管在，{Math.ceil((game.raidUntil - now) / 1000)}s 不能动</span>
+                        )}
+                        {game.dousedUntil > now && (
+                            <span className="text-orange-300 font-black">🪣 火灭了，{Math.ceil((game.dousedUntil - now) / 1000)}s 不能上炉</span>
+                        )}
+                        {game.curseNext && <span className="text-orange-300">🍃 下一串火旺，手要快</span>}
+                        {game.badNext && <span className="text-pink-300">🧂 下一单差评</span>}
+                    </div>
+                )}
 
                 {/* 主体：左操作 / 右对手 */}
                 <div className="flex-1 min-h-0 flex">
@@ -627,6 +808,9 @@ export default function BbqApp({ onBack }: Props) {
                             <div className="rounded-lg bg-white/5 px-2 py-1.5 flex justify-between"><span className="text-slate-400">烤糊</span><span className="text-red-300 font-bold">{sm.burnt} 串</span></div>
                             <div className="rounded-lg bg-white/5 px-2 py-1.5 flex justify-between"><span className="text-slate-400">客人走掉</span><span className="text-slate-300 font-bold">{sm.missed} 位</span></div>
                         </div>
+                        <p className="mt-2 text-[9.5px] text-slate-400 text-center">
+                            {game.rival.name}：上菜 {sm.rivalServed} 单 · 砸了你 {sm.rivalAttacks} 次
+                        </p>
                         <div className="mt-3 space-y-2">
                             <button onClick={forward} disabled={forwarded} className="w-full py-2.5 rounded-xl bg-amber-500 text-[#1a1206] text-[13px] font-black cursor-pointer disabled:opacity-60">
                                 {forwarded ? '✓ 已发到聊天' : '📤 把战报发给 TA'}
@@ -651,8 +835,21 @@ export default function BbqApp({ onBack }: Props) {
                             <p className="text-[13px] font-black text-white">当晚经过</p>
                             <button onClick={() => setShowReport(false)} className="text-[11px] text-slate-400 cursor-pointer">收起</button>
                         </div>
-                        <div className="flex-1 overflow-y-auto rounded-lg bg-black/40 p-2.5 text-[10.5px] text-slate-300 leading-relaxed whitespace-pre-wrap font-mono">
-                            {game.log.join('\n') || '（这一局没留下记录）'}
+                        <div className="flex-1 overflow-y-auto rounded-lg bg-black/40 p-2 text-[10.5px] leading-relaxed">
+                            {timeline(game).length === 0 ? (
+                                <p className="text-slate-500 p-1">（这一局没留下记录）</p>
+                            ) : (
+                                <div className="space-y-1">
+                                    {timeline(game).map((l, i) => (
+                                        <div key={i} className="flex items-start gap-1.5">
+                                            <span className="text-slate-500 tabular-nums shrink-0">{l.time}</span>
+                                            <span className={`shrink-0 font-bold w-[3.2rem] truncate ${l.who === '你' ? 'text-amber-300' : 'text-sky-300'}`}>{l.who}</span>
+                                            <span className={`flex-1 min-w-0 break-words ${l.kind === 'item' ? 'text-slate-100' : l.kind === 'burn' || l.kind === 'miss' ? 'text-slate-400' : 'text-slate-300'}`}>{l.text}</span>
+                                            {l.money != null && <span className="text-emerald-300 font-bold shrink-0">+¥{l.money}</span>}
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
                         </div>
                     </div>
                 </div>
