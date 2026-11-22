@@ -167,7 +167,7 @@ describe('local startup failure history',()=>{
   read.mockRestore();write.mockRestore();
  });
  it('records slow startup and distinguishes a later mount without claiming application health',async()=>{
-  const {window,document}=boot();vi.advanceTimersByTime(12000);
+  const {window,document}=boot();vi.advanceTimersByTime(45000);
   document.getElementById('root')!.innerHTML='<div hidden data-database-pending aria-busy="true"></div>';await flush();
   vi.advanceTimersByTime(1000);
   const record=JSON.parse(Object.values(snapshot(window))[0]);

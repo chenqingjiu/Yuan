@@ -257,5 +257,6 @@
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', watchRoot, {once:true});
   else watchRoot();
-  timer = setTimeout(show, standalone ? 0 : 12000);
+  // 45s：GitHub Pages 首屏要拉 ~900KB 主包，慢网下 12s 会误报成"启动尚未完成"
+  timer = setTimeout(show, standalone ? 0 : 45000);
 }());
