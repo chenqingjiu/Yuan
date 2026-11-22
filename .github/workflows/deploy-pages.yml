@@ -52,6 +52,10 @@ jobs:
 
       - name: Build
         run: pnpm run build
+        env:
+          # Node 20 在 runner 上默认堆约 2GB，vite 打包大 chunk 时会
+          # "Ineffective mark-compacts near heap limit" 直接 134 退出（本地大内存不复现）。
+          NODE_OPTIONS: --max-old-space-size=6144
 
       - name: Verify build asset retention
         run: node --test scripts/prepare-retained-build-assets.test.mjs
