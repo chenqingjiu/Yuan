@@ -720,7 +720,7 @@ export default function BbqApp({ onBack }: Props) {
                         </div>
 
                         {/* 食材架 */}
-                        <div className="shrink-0 rounded-lg bg-black/35 border border-white/10 p-1">
+                        <div className="shrink-0 rounded-lg bg-black/35 border border-white/10 p-1 flex flex-col gap-1">
                             <div className="flex items-center gap-1">
                                 <div className="flex-1 grid grid-cols-4 gap-1">
                                     {MEATS.map((m) => (
@@ -747,22 +747,27 @@ export default function BbqApp({ onBack }: Props) {
                                         </button>
                                     ))}
                                 </div>
-                                <div className="w-px h-8 bg-white/10" />
-                                <div className="flex flex-col gap-0.5 w-[46px]">
-                                    {([0, 1, 2] as const).map((s) => {
-                                        const on = game.pick.spicy === s;
-                                        const tone = s === 0 ? 'text-emerald-300' : s === 1 ? 'text-amber-300' : 'text-red-300';
-                                        return (
-                                            <button
-                                                key={s}
-                                                onClick={() => onSpicy(s)}
-                                                className={`flex-1 rounded-md flex items-center justify-center cursor-pointer transition-colors ${on ? 'bg-white/20 ring-1 ring-white/60' : 'bg-white/[0.05]'}`}
-                                            >
-                                                <span className={`text-[9px] font-black leading-none ${tone}`}>{SPICY_LABEL[s]}</span>
-                                            </button>
-                                        );
-                                    })}
-                                </div>
+                            </div>
+                            {/* 辣度单独占一行：原先挤在 46px 里竖排三个，每格只有 12px 高，太容易手滑 */}
+                            <div className="flex gap-1 h-[30px]">
+                                {([0, 1, 2] as const).map((s) => {
+                                    const on = game.pick.spicy === s;
+                                    const tone = s === 0 ? 'text-emerald-300' : s === 1 ? 'text-amber-300' : 'text-red-300';
+                                    const fill =
+                                        s === 0 ? 'bg-emerald-400/25 ring-2 ring-emerald-400'
+                                            : s === 1 ? 'bg-amber-400/30 ring-2 ring-amber-400'
+                                                : 'bg-red-500/30 ring-2 ring-red-400';
+                                    return (
+                                        <button
+                                            key={s}
+                                            onClick={() => onSpicy(s)}
+                                            className={`flex-1 rounded-lg flex items-center justify-center gap-1 cursor-pointer transition-colors ${on ? fill : 'bg-white/[0.06] border border-white/10'}`}
+                                        >
+                                            <span className="text-[10px] leading-none">{s === 0 ? '🌿' : s === 1 ? '🌶️' : '🔥'}</span>
+                                            <span className={`text-[11px] font-black leading-none ${tone}`}>{SPICY_LABEL[s]}</span>
+                                        </button>
+                                    );
+                                })}
                             </div>
                         </div>
                     </div>
@@ -846,7 +851,7 @@ export default function BbqApp({ onBack }: Props) {
                                             <span className="text-slate-500 tabular-nums shrink-0">{l.time}</span>
                                             <span className={`shrink-0 font-bold w-[3.2rem] truncate ${l.who === '你' ? 'text-amber-300' : 'text-sky-300'}`}>{l.who}</span>
                                             <span className={`flex-1 min-w-0 break-words ${l.kind === 'item' ? 'text-slate-100' : l.kind === 'burn' || l.kind === 'miss' ? 'text-slate-400' : 'text-slate-300'}`}>{l.text}</span>
-                                            {l.money != null && <span className="text-emerald-300 font-bold shrink-0">+¥{l.money}</span>}
+                                            {l.money != null && <span className={`font-bold shrink-0 ${l.money < 0 ? 'text-red-300' : 'text-emerald-300'}`}>{l.money < 0 ? `-¥${-l.money}` : `+¥${l.money}`}</span>}
                                         </div>
                                     ))}
                                 </div>

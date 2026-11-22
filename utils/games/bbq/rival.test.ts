@@ -55,17 +55,28 @@ describe('对手捣乱', () => {
         expect(after.pick.meat).toBeUndefined();
     });
 
-    it('撒盐让下一单只拿四成，且不算零失误', () => {
+    it('撒盐让下一单倒赔半价，且不算零失误', () => {
         const { s, o } = withGuest();
         const { s: bench, k } = benchSkewer(s, o, T0 + 700);
         const placed = placeOnGrill(bench, k.id, T0 + 800);
         const flipped = { ...placed, skewers: placed.skewers.map((x) => ({ ...x, flippedAt: T0 + 2850 })) };
         const salty = applyRivalAttack(flipped, { item: 'salt', line: '今天盐有点咸' }, T0 + 2900);
         expect(salty.badNext).toBe(true);
-        const done = serve(salty, k.id, T0 + 5000);
-        expect(done.money).toBe(7); // 18 * 0.4 向下取整
+        // 倒赔：这一单不但不给钱，还扣掉半价（至少 5）。18 的半价是 9。
+        const done = serve({ ...salty, money: 100 }, k.id, T0 + 5000);
+        expect(done.money).toBe(91);
         expect(done.perfect).toBe(0);
         expect(done.badNext).toBe(false);
+    });
+
+    it('撒盐倒赔不会把营业额扣成负数', () => {
+        const { s, o } = withGuest();
+        const { s: bench, k } = benchSkewer(s, o, T0 + 700);
+        const placed = placeOnGrill(bench, k.id, T0 + 800);
+        const flipped = { ...placed, skewers: placed.skewers.map((x) => ({ ...x, flippedAt: T0 + 2850 })) };
+        const salty = applyRivalAttack(flipped, { item: 'salt', line: '今天盐有点咸' }, T0 + 2900);
+        const done = serve({ ...salty, money: 3 }, k.id, T0 + 5000);
+        expect(done.money).toBe(0);
     });
 
     it('扇风让下一串的半熟窗口只剩 1.2 秒', () => {

@@ -21,7 +21,15 @@ export const WAIT_CAP = 3;
 /** 同时等待的客人上限 */
 export const MAX_GUESTS = 3;
 /** 一局时长 */
-export const ROUND_MS = 5 * 60 * 1000;
+export const ROUND_MS = 4 * 60 * 1000;
+/** 顾客耐心：30 秒。不跟着局时一起缩 */
+export const PATIENCE_MS = 30000;
+/** 没有上菜时的兜底来客间隔 */
+const GUEST_GAP_MIN = 6000;
+const GUEST_GAP_MAX = 9000;
+/** 上完一单，隔多久下一位到 */
+const SERVE_GAP_MIN = 3000;
+const SERVE_GAP_MAX = 8000;
 /** 对手一局的捣乱次数 */
 export const ATTACK_COUNT = 3;
 /** 被砸一次，下一次攻击提前多少 */
@@ -349,10 +357,10 @@ export function tick(state: BbqState, now: number, rand: () => number = Math.ran
             guest: Math.floor(rand() * 4),
             meat, veg, spicy,
             bornAt: now,
-            patience: 30000 + Math.floor(rand() * 8000),
+            patience: PATIENCE_MS,
             status: 'waiting',
         }];
-        s.nextGuestAt = now + 8500 + Math.floor(rand() * 3000);
+        s.nextGuestAt = now + GUEST_GAP_MIN + Math.floor(rand() * (GUEST_GAP_MAX - GUEST_GAP_MIN));
     }
 
     // 对手干活
@@ -516,8 +524,8 @@ export function flip(state: BbqState, skewerId: number, now: number): BbqState {
     };
 }
 
-/** 上菜：熟了给钱，夹生给一半；被撒盐的那一单只拿四成 */
-export function serve(state: BbqState, skewerId: number, now: number): BbqState {
+/** 上菜：熟了给钱，夹生给一半；被撒盐的那一单要倒赔 */
+export function serve(state: BbqState, skewerId: number, now: number, rand: () => number = Math.random): BbqState {
     if (state.phase === 'over') return state;
     const stop = blocked(state, now);
     if (stop) return stop;
@@ -534,7 +542,11 @@ export function serve(state: BbqState, skewerId: number, now: number): BbqState 
     let gain = 0;
     if (order) gain = perfect ? price : Math.floor(price * 0.5);
     const salty = !!order && state.badNext;
-    if (salty) gain = Math.floor(gain * 0.4);
+    if (salty) {
+        // 撒盐不是打折，是倒赔：这一单白干，还要赔掉半价（至少 5 块）。
+        // 只有真的疼，捣乱牌才有意义。
+        gain = -Math.max(5, Math.floor(price * 0.5));
+    }
 
     const slots = [...state.slots];
     if (k.slot >= 0) slots[k.slot] = null;
@@ -543,7 +555,7 @@ export function serve(state: BbqState, skewerId: number, now: number): BbqState 
     const event: BbqEvent = order
         ? {
             at: now, actor: 'you', kind: 'serve',
-            text: `${label}${salty ? '（被撒盐·差评）' : perfect ? ' 上菜' : ' 夹生'}`,
+            text: `${label}${salty ? '（被撒盐·赔钱）' : perfect ? ' 上菜' : ' 夹生'}`,
             money: gain,
         }
         : { at: now, actor: 'you', kind: 'waste', text: `${label} 没人要，自己吃了` };
@@ -553,7 +565,10 @@ export function serve(state: BbqState, skewerId: number, now: number): BbqState 
         now,
         slots,
         skewers: state.skewers.filter((x) => x.id !== skewerId),
-        money: state.money + gain,
+        money: Math.max(0, state.money + gain),
+        nextGuestAt: order
+            ? Math.min(state.nextGuestAt, now + SERVE_GAP_MIN + Math.floor(rand() * (SERVE_GAP_MAX - SERVE_GAP_MIN)))
+            : state.nextGuestAt,
         served: state.served + (order ? 1 : 0),
         perfect: state.perfect + (order && perfect && !salty ? 1 : 0),
         energy: Math.min(5, state.energy + (order && perfect && !salty ? 1 : 0)),
@@ -565,7 +580,7 @@ export function serve(state: BbqState, skewerId: number, now: number): BbqState 
         ),
         events: [...state.events, event],
         toast: order
-            ? { text: salty ? `差评 +¥${gain}` : perfect ? `+¥${gain}` : `夹生 +¥${gain}`, at: now, kind: perfect && !salty ? 'good' : 'bad' }
+            ? { text: salty ? `差评 -¥${-gain}` : perfect ? `+¥${gain}` : `夹生 +¥${gain}`, at: now, kind: perfect && !salty ? 'good' : 'bad' }
             : { text: '这串没客人要', at: now, kind: 'bad' },
     };
 }
