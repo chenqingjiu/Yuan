@@ -118,7 +118,10 @@ export default function FarmApp({ character, onBack }: { character?: CharacterPr
         farm.plots.forEach((plot, i) => {
             scene.setPlot(i, { crop: plot.crop, stage: stageOf(plot, now) });
         });
-        scene.setHouseLevel(levelOf(farm));
+        // 房子画了四个阶段、等级只有三级：二级直接跳到「有门有烟囱」，
+        // 三级给最精致那栋，升级感更明显（第 2 张留给以后的装饰解锁）
+        const lv = levelOf(farm);
+        scene.setHouseLevel(lv >= 3 ? 4 : lv === 2 ? 3 : 1);
     }, [farm, now]);
 
     // 角色形象：跟小屋同一套 iframe 桥，解出来再塞进场景
