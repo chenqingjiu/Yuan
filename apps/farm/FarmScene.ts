@@ -95,8 +95,16 @@ export class FarmScene {
 
     private actor: Awaited<ReturnType<typeof createVisitor>> | null = null;
     private placeholder: THREE.Group | null = null;
-    /** 角色的外层容器：用来做弯腰/下蹲，不跟骨骼动画打架 */
+    /** 角色站位（地面上的 xy），转身也在这层 */
     private actorPivot = new THREE.Group();
+    /**
+     * 腰关节：弯腰要绕腰转，不是绕脚底转。
+     * 绕脚底转相当于把整个人当一根杆子往前推倒，头会几乎贴到地面，
+     * 这也是之前「动作僵硬」的主要来源。
+     */
+    private waist = new THREE.Group();
+    /** 腰的高度（世界单位，角色总高约 1.3） */
+    private hipY = 0.62;
     private actorHome = new THREE.Vector3(-3.35, 0, 0.85);
     private moveTarget: THREE.Vector3 | null = null;
     private moveSpeed = 1.7;
@@ -104,10 +112,13 @@ export class FarmScene {
     private facing = 0;
     /** 到了地方要朝哪看；null = 保持走路方向 */
     private faceTarget: number | null = null;
+    /** 到了地方之后慢慢转过去的朝向（直接赋值会「啪」地一下转身） */
+    private facingWant: number | null = null;
     private lean = 0;
     private leanTarget = 0;
-    private squash = 0;
-    private squashTarget = 0;
+    /** 蹲下去的压缩量：以脚底为原点压短一点，脚不会陷进地里 */
+    private squat = 0;
+    private squatTarget = 0;
     private actionUntil = 0;
     private actionKind: 'idle' | 'water' | 'plant' | 'harvest' = 'idle';
     private blinkUntil = 0;
@@ -149,6 +160,8 @@ export class FarmScene {
 
         this.scene.add(this.houseGroup);
         this.actorPivot.position.copy(this.actorHome);
+        this.waist.position.y = this.hipY;
+        this.actorPivot.add(this.waist);
         this.scene.add(this.actorPivot);
         this.actorShadow = this.blob(0.86, 0.86, this.actorHome.x, 0.012, this.actorHome.z);
 
@@ -336,7 +349,7 @@ export class FarmScene {
 
         const tone = HOUSE_TONE[stage] ?? HOUSE_TONE[1];
         // 画布 512，内容大约在 y 0.22~0.94、x 0.11~0.89 之间
-        const canvasH = 4.7;
+        const canvasH = 5.15;
         const canvasW = canvasH;
         const contentTop = 0.224;
         const contentBottom = 0.937;
@@ -555,7 +568,7 @@ export class FarmScene {
         this.actor = visitor;
         visitor.root.position.set(0, 0, 0);
         visitor.root.rotation.y = 0;
-        this.actorPivot.add(visitor.root);
+        this.waist.add(visitor.root);
         this.moveSpeed = Math.max(1.6, visitor.walkSpeed * 1.15);
     }
 
@@ -576,7 +589,7 @@ export class FarmScene {
         const legR = new THREE.Mesh(legGeo, cloth);
         legR.position.set(0.07, 0.18, 0);
         g.add(head, torso, legL, legR);
-        this.actorPivot.add(g);
+        this.waist.add(g);
         this.placeholder = g;
         this.moveSpeed = 1.75;
     }
@@ -586,7 +599,8 @@ export class FarmScene {
         const group = this.plotGroups[index];
         if (!group) return;
         const target = group.position.clone();
-        target.z += PLOT_SIZE * 0.78;
+        // 站得离地近一点：0.78 时人在一米开外弯腰，够不着地，像远远地鞠了个躬
+        target.z += PLOT_SIZE * 0.56;
         target.y = 0;
         this.faceTarget = Math.atan2(group.position.x - target.x, group.position.z - target.z);
         this.walkTo(target, onArrive);
@@ -599,6 +613,7 @@ export class FarmScene {
 
     walkTo(target: THREE.Vector3, onArrive?: () => void) {
         this.moveTarget = target.clone();
+        this.facingWant = null;
         this.onArrive = onArrive ?? null;
     }
 
@@ -618,15 +633,16 @@ export class FarmScene {
         this.actionKind = kind;
         this.actionUntil = this.elapsed + durationMs / 1000;
         if (kind === 'water') {
-            this.leanTarget = 0.42;
-            this.squashTarget = 0.06;
+            this.leanTarget = 0.20;
+            this.squatTarget = 0.10;
             this.spawnDrops();
         } else if (kind === 'plant') {
-            this.leanTarget = 0.52;
-            this.squashTarget = 0.16;
+            // 种植要蹲到接近地面
+            this.leanTarget = 0.24;
+            this.squatTarget = 0.18;
         } else {
-            this.leanTarget = 0.50;
-            this.squashTarget = 0.12;
+            this.leanTarget = 0.22;
+            this.squatTarget = 0.16;
         }
     }
 
@@ -781,8 +797,7 @@ export class FarmScene {
     };
 
     private stepActor(dt: number) {
-        const body = (this.actor?.root ?? this.placeholder) as THREE.Object3D | null;
-        if (!body) return;
+        if (!this.waist.children.length) return;
 
         // 走路
         if (this.moveTarget) {
@@ -792,7 +807,8 @@ export class FarmScene {
             if (dist < 0.07) {
                 this.moveTarget = null;
                 if (this.faceTarget !== null) {
-                    this.facing = this.faceTarget;
+                    // 不要直接赋值：转身一帧跳过去，看起来就是「啪」地翻了个面
+                    this.facingWant = this.faceTarget;
                     this.faceTarget = null;
                 }
                 const cb = this.onArrive;
@@ -810,29 +826,59 @@ export class FarmScene {
             }
         }
 
+        // 站定后慢慢转向地块
+        if (!this.moveTarget && this.facingWant !== null) {
+            this.facing = smoothAngle(this.facing, this.facingWant, 8 * dt);
+            this.actorPivot.rotation.y = this.facing;
+            if (Math.abs(this.facing - this.facingWant) < 0.02) {
+                this.facing = this.facingWant;
+                this.facingWant = null;
+            }
+        }
+
         // 动作结束，直起身
         if (this.actionKind !== 'idle' && this.elapsed > this.actionUntil) {
             this.actionKind = 'idle';
             this.leanTarget = 0;
-            this.squashTarget = 0;
+            this.squatTarget = 0;
         }
 
-        // 前倾与下蹲：插值到目标，别硬跳
-        this.lean += (this.leanTarget - this.lean) * Math.min(1, dt * 7);
-        this.squash += (this.squashTarget - this.squash) * Math.min(1, dt * 7);
-        body.rotation.x = this.lean;
-        body.scale.y = 1 - this.squash;
-        body.position.y = this.squash * 0.12;
+        // 弯腰分三层：
+        //   1) 绕腰转（不是绕脚底）—— 上身前折，不是把人当杆子推倒
+        //   2) 压短一点（脚底为原点）—— 有蹲下去的意思，脚还在地面上
+        //   3) 腰往前挪一点 —— 抵消绕腰转把脚甩到身后的位移
+        // 之前只有「绕脚底 + 大角度」，所以看上去像整个人向前倒。
+        this.lean += (this.leanTarget - this.lean) * Math.min(1, dt * 6);
+        this.squat += (this.squatTarget - this.squat) * Math.min(1, dt * 8);
+        // 干活时叠一点发力的节奏，否则 1.7 秒定在那里像暂停画面
+        const beat =
+            this.actionKind === 'idle'
+                ? 0
+                : Math.abs(Math.sin(this.elapsed * (this.actionKind === 'plant' ? 4.2 : 3.2))) * 0.05;
+        const bend = this.lean + beat;
+        this.waist.rotation.x = bend;
+        this.waist.position.y = this.hipY;
+        this.waist.position.z = this.hipY * Math.sin(bend) * 0.55;
 
         // 骨骼动画
         if (this.actor) {
             const moving = !!this.moveTarget;
             const motion = this.actionKind !== 'idle' ? 'water' : moving ? 'walk' : 'idle';
-            this.actor.animate(this.elapsed, motion);
+            // 头身比接近 1:1 的角色，一低头整颗头就把身体盖住了，
+            // 看上去像「头栽进地里」。弯腰时把下巴抬回来，只让身体前探。
+            const act =
+                this.actionKind !== 'idle'
+                    ? { kind: 'farm', hands: [] as number[][], socialHead: [-0.32, 0, 0] }
+                    : undefined;
+            this.actor.animate(this.elapsed, motion, 'standing', act);
             if (this.elapsed < this.blinkUntil) {
                 this.actor.updateExpression(this.elapsed, { blink: true });
             }
         }
+
+        // 压短放在骨骼动画之后：animate 每帧会重置根节点变换，放前面会被抹掉
+        const body = (this.actor?.root ?? this.placeholder) as THREE.Object3D | null;
+        if (body) body.scale.y = 1 - this.squat;
     }
 
     private stepDrops(dt: number) {
