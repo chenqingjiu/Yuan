@@ -58,3 +58,6 @@ export function readChatTranslationStyle(charId: string | null | undefined): Cha
     try { return normalizeChatTranslationStyle(localStorage.getItem(`chat_translate_style_${charId}`)); }
     catch { return 'bubble'; }
 }
+export function saveChatTranslationStyle(charId: string, style: ChatTranslationStyle): void {
+    localStorage.setItem(`chat_translate_style_${charId}`, normalizeChatTranslationStyle(style));
+}

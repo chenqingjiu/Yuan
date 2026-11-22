@@ -135,8 +135,9 @@ import { resolveActiveSound, playWhiteboxSound, unlockWhiteboxAudio, parseWhiteb
 import WhiteboxSoundEditor from '../components/chat/WhiteboxSoundEditor';
 import ChatCharacterProfile from '../components/chat/ChatCharacterProfile';
 import { normalizeTranslationLangLabel, isTranslationLangPreset } from '../utils/translationLang';
-import { readChatTranslationStyle, readSubtitleSettings, saveSubtitleSettings, type ChatTranslationStyle } from '../utils/chatTranslationStyle';
+import { readChatTranslationStyle, saveChatTranslationStyle, readSubtitleSettings, saveSubtitleSettings, type ChatTranslationStyle } from '../utils/chatTranslationStyle';
 import { ChatSubtitleLayer } from '../components/chat/ChatSubtitleLayer';
+import SubtitleSettingsDialog from '../components/chat/SubtitleSettingsDialog';
 import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } from '../components/character/CharacterGroupFilter';
 import { trackEvent, noteMessageSent } from '../utils/analytics';
 import { markAmsgStateDirty, markAmsgStateDirtyForAll } from '../utils/amsgStateSync';
@@ -416,9 +417,11 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
   // 外挂字幕：翻译样式（气泡 / 字幕）与字幕排版设置，随角色持久化
   const [translationStyle, setTranslationStyle] = useState<ChatTranslationStyle>(() => readChatTranslationStyle(activeCharacterId));
   const [subtitleSettings, setSubtitleSettings] = useState(() => readSubtitleSettings(activeCharacterId));
+  const [showSubtitleSettings, setShowSubtitleSettings] = useState(false);
   useEffect(() => {
     setTranslationStyle(readChatTranslationStyle(activeCharacterId));
     setSubtitleSettings(readSubtitleSettings(activeCharacterId));
+    setShowSubtitleSettings(false);
   }, [activeCharacterId]);
   const [translationEnabled, setTranslationEnabled] = useState(() => {
         try { return JSON.parse(localStorage.getItem(`chat_translate_enabled_${activeCharacterId}`) || 'false'); } catch { return false; }
@@ -4675,6 +4678,18 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
                     setShowingTargetIds(new Set());
                     trackEvent('切换翻译展开模式', { enabled: next ? 'on' : 'off' });
                 }}
+                translationStyle={translationStyle}
+                onSetTranslationStyle={(style) => {
+                    setTranslationStyle(style);
+                    if (activeCharacterId) saveChatTranslationStyle(activeCharacterId, style);
+                    trackEvent('切换译文呈现方式', { style });
+                }}
+                subtitleSettings={subtitleSettings}
+                onSetSubtitleSettings={(next) => {
+                    setSubtitleSettings(next);
+                    if (activeCharacterId) saveSubtitleSettings(activeCharacterId, next);
+                }}
+                onOpenSubtitleSettings={() => setShowSubtitleSettings(true)}
                 onSetTranslateSourceLang={(lang: string) => {
                     const next = normalizeTranslationLangLabel(lang);
                     if (!next) return;
@@ -5284,6 +5299,18 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
                             void cancelCloudAwayTasks(char, updateCharacter);
                         }
                     }}
+                />
+            )}
+
+            {/* 外挂字幕样式设置 — 入口：设置 → 翻译与语音 → 译文呈现方式 → 字幕样式设置 */}
+            {showSubtitleSettings && activeCharacterId && (
+                <SubtitleSettingsDialog
+                    value={subtitleSettings}
+                    onChange={(next) => {
+                        setSubtitleSettings(next);
+                        saveSubtitleSettings(activeCharacterId, next);
+                    }}
+                    onClose={() => setShowSubtitleSettings(false)}
                 />
             )}
 

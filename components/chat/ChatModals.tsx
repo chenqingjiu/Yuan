@@ -115,6 +115,7 @@ interface ChatModalsProps {
     onSetTranslationStyle?: (style: 'bubble' | 'subtitle') => void;
     subtitleSettings?: ChatSubtitleSettings;
     onSetSubtitleSettings?: (next: ChatSubtitleSettings) => void;
+    onOpenSubtitleSettings?: () => void;
     // XHS toggle
     xhsEnabled?: boolean;
     onToggleXhs?: () => void;
@@ -290,6 +291,7 @@ const ChatModals: React.FC<ChatModalsProps> = ({
     onSetHistoryStart, onRestoreAdaptiveContext, onJumpToMessageInChat, onEnterSelectionMode, onReplyMessage, onEditMessageStart, onConfirmEditMessage, onDeleteMessage, onRecallMessage, onCopyMessage, onToggleMessageFavorite, messageFavorited, onDeleteEmoji, onDeleteCategory, onRenameCategory, onDownloadCategory,
     allCharacters = [], onSaveCategoryVisibility,
     translationEnabled, onToggleTranslation, translationExpanded, onToggleTranslationExpanded, translateSourceLang, translateTargetLang, onSetTranslateSourceLang, onSetTranslateLang,
+    translationStyle, onSetTranslationStyle, subtitleSettings, onSetSubtitleSettings, onOpenSubtitleSettings,
     xhsEnabled, onToggleXhs,
     htmlModeEnabled, onToggleHtmlMode, htmlModeCustomPrompt, setHtmlModeCustomPrompt,
     chatVoiceEnabled, onToggleChatVoice, chatVoiceAutoPlay, onToggleChatVoiceAutoPlay, chatVoiceLang, onSetChatVoiceLang,
@@ -699,6 +701,28 @@ const ChatModals: React.FC<ChatModalsProps> = ({
                                             <span className={`w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${translationExpanded ? 'translate-x-4' : ''}`} />
                                         </span>
                                     </button>
+                                    {/* 译文呈现方式：气泡内并排 / 外挂字幕（仅在同时展开时有意义） */}
+                                    {translationExpanded && (
+                                        <div className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 space-y-2">
+                                            <div className="text-[11px] font-bold text-slate-600">译文呈现方式</div>
+                                            <div className="flex gap-2">
+                                                <button type="button" onClick={() => onSetTranslationStyle?.('bubble')}
+                                                    className={`flex-1 rounded-lg border px-2 py-2 text-[11px] transition-colors ${translationStyle !== 'subtitle' ? 'border-primary bg-primary/10 text-primary font-bold' : 'border-slate-200 text-slate-500'}`}>
+                                                    气泡内并排
+                                                </button>
+                                                <button type="button" onClick={() => onSetTranslationStyle?.('subtitle')}
+                                                    className={`flex-1 rounded-lg border px-2 py-2 text-[11px] transition-colors ${translationStyle === 'subtitle' ? 'border-primary bg-primary/10 text-primary font-bold' : 'border-slate-200 text-slate-500'}`}>
+                                                    外挂字幕
+                                                </button>
+                                            </div>
+                                            {translationStyle === 'subtitle' && (
+                                                <button type="button" onClick={onOpenSubtitleSettings}
+                                                    className="w-full rounded-lg border border-slate-200 bg-slate-50 px-2 py-2 text-[11px] text-slate-600 active:bg-slate-100">
+                                                    字幕样式设置（字号 / 字体 / 颜色 / 描边）
+                                                </button>
+                                            )}
+                                        </div>
+                                    )}
                                     {/* Preview */}
                                     <div className="text-[11px] text-center text-slate-500 bg-slate-50 rounded-lg py-2">
                                         选<span className="font-bold text-slate-700">{translateSourceLang || '?'}</span> 译<span className="font-bold text-primary">{translateTargetLang || '?'}</span>
