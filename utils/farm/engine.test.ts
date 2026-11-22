@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+    buyHouse,
+    canBuyHouse,
     createFarm,
     harvest,
     isRipe,
@@ -8,6 +10,7 @@ import {
     offlineReport,
     plant,
     remainingMs,
+    setHouseStage,
     stageOf,
     water,
 } from './engine';
@@ -16,9 +19,11 @@ import { CROPS, TUTORIAL_GROW_MS } from './crops';
 const MIN = 60_000;
 
 describe('一块田 · 播种与浇水', () => {
-    it('新农场有四块空地和一点启动金币', () => {
+    it('新农场有六块空地和一点启动金币', () => {
         const farm = createFarm(0);
-        expect(farm.plots).toHaveLength(4);
+        expect(farm.plots).toHaveLength(6);
+        expect(farm.houseStage).toBe(1);
+        expect(farm.ownedHouses).toEqual([1]);
         expect(farm.plots.every(p => p.crop === null)).toBe(true);
         expect(farm.coins).toBeGreaterThan(0);
     });
@@ -99,7 +104,7 @@ describe('一块田 · 收割与升级', () => {
         if (!r.ok) return;
         expect(r.gained).toBe(CROPS.wheat.price);
         expect(r.state.coins).toBe(before - CROPS.wheat.seedCost + CROPS.wheat.price);
-        expect(r.state.exp).toBe(1);
+        expect(r.state.exp).toBe(CROPS.wheat.exp);
         expect(r.state.plots[0].crop).toBeNull();
     });
 
@@ -110,12 +115,20 @@ describe('一块田 · 收割与升级', () => {
         expect(harvest(farm, 0, 1000).ok).toBe(false);
     });
 
-    it('等级由经验推出：收 5 次升到 2 级', () => {
-        const farm = { ...createFarm(0), exp: 4 };
-        expect(levelOf(farm)).toBe(1);
-        expect(levelOf({ ...farm, exp: 5 })).toBe(2);
-        expect(levelOf({ ...farm, exp: 14 })).toBe(3);
-        expect(levelOf({ ...farm, exp: 999 })).toBe(3);
+    it('等级由经验推出，十级封顶', () => {
+        const farm = createFarm(0);
+        expect(levelOf({ ...farm, exp: 9 })).toBe(1);
+        expect(levelOf({ ...farm, exp: 10 })).toBe(2);
+        expect(levelOf({ ...farm, exp: 46 })).toBe(3);
+        expect(levelOf({ ...farm, exp: 47 })).toBe(4);
+        expect(levelOf({ ...farm, exp: 190 })).toBe(7);
+        expect(levelOf({ ...farm, exp: 575 })).toBe(10);
+        expect(levelOf({ ...farm, exp: 999999 })).toBe(10);
+    });
+
+    it('越贵的作物给的经验越多', () => {
+        expect(CROPS.wheat.exp).toBeLessThan(CROPS.corn.exp);
+        expect(CROPS.corn.exp).toBeLessThan(CROPS.carrot.exp);
     });
 
     it('等级不够买不了高等级作物', () => {
@@ -126,7 +139,7 @@ describe('一块田 · 收割与升级', () => {
     });
 
     it('金币不够买不了种子', () => {
-        const farm = { ...createFarm(0), exp: 14, coins: 0 };
+        const farm = { ...createFarm(0), exp: 47, coins: 0 };
         const r = plant(farm, 0, 'carrot', 0);
         expect(r.ok).toBe(false);
         if (!r.ok) expect(r.reason).toContain('金币不够');
@@ -150,5 +163,55 @@ describe('一块田 · 离线日报', () => {
     it('全部正常时不报任何东西', () => {
         const farm = createFarm(0);
         expect(offlineReport(farm, 999999999)).toEqual([]);
+    });
+});
+
+
+describe('一块田 · 房子', () => {
+    it('等级和金币都够才能买', () => {
+        const poor = { ...createFarm(0), exp: 47, coins: 10 };
+        expect(canBuyHouse(poor, 2).ok).toBe(false);
+        expect(canBuyHouse(poor, 2).reason).toContain('还差');
+
+        const low = { ...createFarm(0), exp: 10, coins: 999 };
+        expect(canBuyHouse(low, 2).ok).toBe(false);
+        expect(canBuyHouse(low, 2).reason).toContain('4 级');
+
+        const ok = { ...createFarm(0), exp: 47, coins: 999 };
+        expect(canBuyHouse(ok, 2).ok).toBe(true);
+    });
+
+    it('买房扣钱并立刻换上', () => {
+        const farm = { ...createFarm(0), exp: 47, coins: 500 };
+        const r = buyHouse(farm, 2, 0);
+        expect(r.ok).toBe(true);
+        if (!r.ok) return;
+        expect(r.state.coins).toBe(350);
+        expect(r.state.houseStage).toBe(2);
+        expect(r.state.ownedHouses).toContain(2);
+    });
+
+    it('买过的阶段随时能切回去，不再花钱', () => {
+        const start = { ...createFarm(0), exp: 575, coins: 3000 };
+        const a = buyHouse(start, 2, 0);
+        if (!a.ok) throw new Error('买入失败');
+        const b = buyHouse(a.state, 4, 0);
+        if (!b.ok) throw new Error('买入失败');
+        const back = setHouseStage(b.state, 2, 0);
+        expect(back.ok).toBe(true);
+        if (!back.ok) return;
+        expect(back.state.houseStage).toBe(2);
+        expect(back.state.coins).toBe(b.state.coins);
+    });
+
+    it('没买的阶段切不了', () => {
+        expect(setHouseStage(createFarm(0), 3, 0).ok).toBe(false);
+    });
+
+    it('重复买同一阶段会被挡住', () => {
+        const start = { ...createFarm(0), exp: 575, coins: 3000 };
+        const a = buyHouse(start, 2, 0);
+        if (!a.ok) throw new Error('买入失败');
+        expect(canBuyHouse(a.state, 2).reason).toContain('买过');
     });
 });

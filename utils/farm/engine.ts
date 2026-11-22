@@ -8,7 +8,16 @@
  * 所有函数都是纯函数：传进旧状态，返回新状态，不碰存储、不发请求。
  */
 
-import { CROPS, LEVEL_EXP, MAX_LEVEL, PLOT_COUNT, TUTORIAL_GROW_MS, type CropId } from './crops';
+import {
+    CROPS,
+    HOUSE_STAGES,
+    LEVEL_EXP,
+    MAX_LEVEL,
+    PLOT_COUNT,
+    TUTORIAL_GROW_MS,
+    type CropId,
+    type HouseStage,
+} from './crops';
 
 export interface PlotState {
     crop: CropId | null;
@@ -26,6 +35,10 @@ export interface FarmState {
     plots: PlotState[];
     /** 新手引导是否已经用掉（含已收割或已种下）。 */
     tutorialUsed: boolean;
+    /** 现在摆出来的房子阶段 1..4 */
+    houseStage: HouseStage;
+    /** 已经买下的阶段，随时可以切回去看 */
+    ownedHouses: HouseStage[];
     updatedAt: number;
 }
 
@@ -35,10 +48,12 @@ const emptyPlot = (): PlotState => ({ crop: null, plantedAt: null, wateredAt: nu
 
 export function createFarm(now: number = Date.now()): FarmState {
     return {
-        coins: 10,
+        coins: 20,
         exp: 0,
         plots: Array.from({ length: PLOT_COUNT }, emptyPlot),
         tutorialUsed: false,
+        houseStage: 1,
+        ownedHouses: [1],
         updatedAt: now,
     };
 }
@@ -134,12 +149,19 @@ export function harvest(state: FarmState, plotId: number, now: number): ActionRe
     if (!plot.crop) return { ok: false, reason: '这块地是空的' };
     if (!isRipe(plot, now)) return { ok: false, reason: '还没熟' };
 
-    const gained = CROPS[plot.crop].price;
+    const def = CROPS[plot.crop];
+    const gained = def.price;
     const plots = state.plots.map((p, i) => (i === plotId ? emptyPlot() : p));
     return {
         ok: true,
         gained,
-        state: { ...state, coins: state.coins + gained, exp: state.exp + 1, plots, updatedAt: now },
+        state: {
+            ...state,
+            coins: state.coins + gained,
+            exp: state.exp + def.exp,
+            plots,
+            updatedAt: now,
+        },
     };
 }
 
@@ -164,6 +186,39 @@ export function offlineReport(state: FarmState, now: number): string[] {
         }
     });
     return out;
+}
+
+/** 某个房子阶段能不能买：等级够、钱够、还没买过。 */
+export function canBuyHouse(state: FarmState, stage: HouseStage): { ok: boolean; reason: string } {
+    const def = HOUSE_STAGES.find((h) => h.stage === stage);
+    if (!def) return { ok: false, reason: '没有这个阶段' };
+    if (state.ownedHouses.includes(stage)) return { ok: false, reason: '已经买过了' };
+    if (levelOf(state) < def.level) return { ok: false, reason: `要 ${def.level} 级才能买` };
+    if (state.coins < def.cost) return { ok: false, reason: `还差 ${def.cost - state.coins} 币` };
+    return { ok: true, reason: '' };
+}
+
+/** 买下某个阶段的房子，并立刻换上。 */
+export function buyHouse(state: FarmState, stage: HouseStage, now: number): ActionResult {
+    const check = canBuyHouse(state, stage);
+    if (!check.ok) return { ok: false, reason: check.reason };
+    const def = HOUSE_STAGES.find((h) => h.stage === stage)!;
+    return {
+        ok: true,
+        state: {
+            ...state,
+            coins: state.coins - def.cost,
+            ownedHouses: [...state.ownedHouses, stage].sort((a, b) => a - b) as HouseStage[],
+            houseStage: stage,
+            updatedAt: now,
+        },
+    };
+}
+
+/** 在已买下的阶段之间切换外观，不花钱——「重新粉刷」随时能切回去看看旧样子。 */
+export function setHouseStage(state: FarmState, stage: HouseStage, now: number): ActionResult {
+    if (!state.ownedHouses.includes(stage)) return { ok: false, reason: '这个阶段还没买' };
+    return { ok: true, state: { ...state, houseStage: stage, updatedAt: now } };
 }
 
 /** 全部地块的状态摘要，给界面画一圈小字用。 */

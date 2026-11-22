@@ -7,6 +7,8 @@ import { selectedHairAssets, type HairSettings, type Parts } from '../room3d/chi
 import { loadCreatorPartsForRender } from '../../utils/creatorPartsBlob';
 import { FarmScene } from './FarmScene';
 import {
+    buyHouse,
+    canBuyHouse,
     createFarm,
     harvest,
     isRipe,
@@ -17,16 +19,21 @@ import {
     plant,
     plotSummary,
     remainingMs,
+    setHouseStage,
     stageOf,
     water,
     type FarmState,
 } from '../../utils/farm/engine';
-import { CROPS, type CropId } from '../../utils/farm/crops';
+import { CROPS, HOUSE_STAGES, MAX_LEVEL, PLOT_COUNT, type CropId, type HouseStage } from '../../utils/farm/crops';
 
 const CROP_ORDER: CropId[] = ['wheat', 'corn', 'carrot'];
 
+/** 干活的动作时长：走到位之后蹲下 → 生效 → 起身 */
+const ACTION_MS = 1700;
+const APPLY_AT = 850;
+
 /**
- * 一块田 —— 院子里的四块地。
+ * 一块田 —— 院子里的六块地。
  *
  * 逻辑全在 utils/farm/engine（纯函数、可测），这个文件只做三件事：喂状态、转点击、
  * 画 HUD。3D 在 FarmScene，角色用的是小屋同一套 chibi 素体。
@@ -36,14 +43,16 @@ export default function FarmApp({ character, onBack }: { character?: CharacterPr
     const hostRef = useRef<HTMLDivElement>(null);
     const sceneRef = useRef<FarmScene | null>(null);
 
-    const storageKey = `farm_state_${character?.id ?? 'guest'}`;
+    const storageKey = `farm_state_v2_${character?.id ?? 'guest'}`;
 
     const [farm, setFarm] = useState<FarmState>(() => {
         try {
-            const raw = localStorage.getItem(`farm_state_${character?.id ?? 'guest'}`);
+            const raw = localStorage.getItem(`farm_state_v2_${character?.id ?? 'guest'}`);
             if (raw) {
                 const parsed = JSON.parse(raw) as FarmState;
-                if (Array.isArray(parsed.plots) && parsed.plots.length === 4) return parsed;
+                if (Array.isArray(parsed.plots) && parsed.plots.length === PLOT_COUNT && Array.isArray(parsed.ownedHouses)) {
+                    return parsed;
+                }
             }
         } catch {
             /* 存档坏了就当新档，不能让一块田打不开 */
@@ -58,12 +67,8 @@ export default function FarmApp({ character, onBack }: { character?: CharacterPr
     const [parts, setParts] = useState<Parts>();
     const [extraItems, setExtraItems] = useState<unknown[]>();
     const [creatorReady, setCreatorReady] = useState(false);
+    const [shopOpen, setShopOpen] = useState(false);
 
-    const hair: HairSettings | undefined = character?.chibiStudio?.home3D?.hair;
-    /**
-     * 交给 createVisitor 的设定必须是完整结构：它会直接读 hair.layers.outfit。
-     * 角色没捏过头发时 hair 是 undefined，这里补一层默认值兜住。
-     */
     const [actorHair, setActorHair] = useState<HairSettings>(() => ({
         layers: {},
         extras: [],
@@ -84,7 +89,6 @@ export default function FarmApp({ character, onBack }: { character?: CharacterPr
         }
     }, [farm, storageKey]);
 
-    // 每秒重读一次时间，让作物自己长、倒计时自己走
     useEffect(() => {
         const timer = setInterval(() => setNow(Date.now()), 1000);
         return () => clearInterval(timer);
@@ -92,11 +96,25 @@ export default function FarmApp({ character, onBack }: { character?: CharacterPr
 
     // ---------- 场景 ----------
 
+    const clickRef = useRef<(index: number) => void>(() => {});
+    const busyRef = useRef(false);
+    const farmRef = useRef(farm);
+    farmRef.current = farm;
+    const seedRef = useRef(seed);
+    seedRef.current = seed;
+
     useEffect(() => {
         if (!hostRef.current) return;
         const scene = new FarmScene({
             host: hostRef.current,
-            onPlotClick: index => handlePlotClick(index),
+            onPlotClick: index => clickRef.current(index),
+            onGroundClick: (x, z) => {
+                if (busyRef.current) return;
+                scene.walkToXZ(x, z);
+            },
+            onActorClick: () => {
+                scene.blink();
+            },
         });
         sceneRef.current = scene;
 
@@ -107,24 +125,19 @@ export default function FarmApp({ character, onBack }: { character?: CharacterPr
             scene.dispose();
             sceneRef.current = null;
         };
-        // handlePlotClick 用 ref 转发，避免重建场景
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    // 把状态推给场景：地块作物 + 房子等级
+    // 状态推给场景
     useEffect(() => {
         const scene = sceneRef.current;
         if (!scene) return;
         farm.plots.forEach((plot, i) => {
             scene.setPlot(i, { crop: plot.crop, stage: stageOf(plot, now) });
         });
-        // 房子画了四个阶段、等级只有三级：二级直接跳到「有门有烟囱」，
-        // 三级给最精致那栋，升级感更明显（第 2 张留给以后的装饰解锁）
-        const lv = levelOf(farm);
-        scene.setHouseLevel(lv >= 3 ? 4 : lv === 2 ? 3 : 1);
+        scene.setHouseLevel(farm.houseStage);
     }, [farm, now]);
 
-    // 角色形象：跟小屋同一套 iframe 桥，解出来再塞进场景
+    // 角色形象
     useEffect(() => {
         let cancelled = false;
         loadCreatorPartsForRender()
@@ -142,19 +155,11 @@ export default function FarmApp({ character, onBack }: { character?: CharacterPr
     useEffect(() => {
         if (!parts || !sceneRef.current) return;
         sceneRef.current.setActor(parts, actorHair).catch(() => {
-            // 形象加载失败就摆一个最简单的小人，别让田里空着
             sceneRef.current?.setPlaceholderActor();
         });
     }, [parts, actorHair]);
 
     // ---------- 交互 ----------
-
-    const clickRef = useRef<(index: number) => void>(() => {});
-    const busyRef = useRef(false);
-    const farmRef = useRef(farm);
-    farmRef.current = farm;
-    const seedRef = useRef(seed);
-    seedRef.current = seed;
 
     const apply = useCallback(
         (result: { ok: boolean; reason?: string }, okText?: string) => {
@@ -168,53 +173,76 @@ export default function FarmApp({ character, onBack }: { character?: CharacterPr
         [addToast],
     );
 
-    const handlePlotClick = useCallback(
-        (index: number) => {
-            if (busyRef.current) return;
-            const state = farmRef.current;
-            const plot = state.plots[index];
-            const t = Date.now();
-            if (!plot) return;
-
-            // 空地：种下选中的种子
-            if (!plot.crop) {
-                const result = plant(state, index, seedRef.current, t);
-                if (!apply(result, `种下了${CROPS[seedRef.current].name}`)) return;
-                setFarm(result.ok ? result.state : state);
-                setNow(t);
-                return;
-            }
-
-            // 该浇水了：让角色走过去浇
-            if (needsWater(plot)) {
-                busyRef.current = true;
-                setBusy(true);
-                sceneRef.current?.walkToPlot(index, () => {
-                    const result = water(farmRef.current, index, Date.now());
-                    if (result.ok) {
-                        setFarm(result.state);
-                        setNow(Date.now());
-                        sceneRef.current?.playAction('water');
-                    }
+    /** 走过去 → 蹲下干活 → 生效 → 起身。动作和状态变化要卡在一起才像在干活。 */
+    const workAt = useCallback(
+        (index: number, kind: 'plant' | 'water' | 'harvest', commit: () => void) => {
+            const scene = sceneRef.current;
+            if (!scene) return;
+            busyRef.current = true;
+            setBusy(true);
+            scene.walkToPlot(index, () => {
+                scene.playAction(kind, ACTION_MS);
+                window.setTimeout(() => {
+                    commit();
+                    setNow(Date.now());
+                }, APPLY_AT);
+                window.setTimeout(() => {
                     busyRef.current = false;
                     setBusy(false);
+                    scene.stepBack(0.35);
+                }, ACTION_MS);
+            });
+        },
+        [],
+    );
+
+    const handlePlotClick = useCallback(
+        (index: number) => {
+            if (busyRef.current) {
+                addToast('他正忙着，等一下');
+                return;
+            }
+            const state = farmRef.current;
+            const plot = state.plots[index];
+            if (!plot) return;
+            const t = Date.now();
+
+            // 空地：走过去蹲下种
+            if (!plot.crop) {
+                const cropId = seedRef.current;
+                const check = plant(state, index, cropId, t);
+                if (!check.ok) {
+                    addToast(check.reason);
+                    return;
+                }
+                workAt(index, 'plant', () => {
+                    const result = plant(farmRef.current, index, cropId, Date.now());
+                    if (result.ok) {
+                        setFarm(result.state);
+                        addToast(`种下${CROPS[cropId].name}`);
+                    }
                 });
                 return;
             }
 
-            // 熟了：走过去收
+            // 待浇水
+            if (needsWater(plot)) {
+                workAt(index, 'water', () => {
+                    const result = water(farmRef.current, index, Date.now());
+                    if (result.ok) setFarm(result.state);
+                });
+                return;
+            }
+
+            // 熟了
             if (isRipe(plot, t)) {
-                busyRef.current = true;
-                setBusy(true);
-                sceneRef.current?.walkToPlot(index, () => {
+                const crop = plot.crop;
+                workAt(index, 'harvest', () => {
                     const result = harvest(farmRef.current, index, Date.now());
                     if (result.ok) {
                         setFarm(result.state);
-                        setNow(Date.now());
-                        addToast(`收了${CROPS[plot.crop!].name}，+${result.gained ?? 0} 币`);
+                        addToast(`收了${CROPS[crop].name}，+${result.gained ?? 0} 币`);
                     }
-                    busyRef.current = false;
-                    setBusy(false);
                 });
                 return;
             }
@@ -222,7 +250,7 @@ export default function FarmApp({ character, onBack }: { character?: CharacterPr
             const left = remainingMs(plot, t);
             addToast(left > 60_000 ? `还要 ${Math.ceil(left / 60_000)} 分钟` : `还有 ${Math.max(1, Math.ceil(left / 1000))} 秒`);
         },
-        [apply, addToast],
+        [addToast, workAt],
     );
     clickRef.current = handlePlotClick;
 
@@ -241,6 +269,8 @@ export default function FarmApp({ character, onBack }: { character?: CharacterPr
     const level = levelOf(farm);
     const progress = levelProgress(farm);
     const tutorialPending = !farm.tutorialUsed;
+    const curHouse = HOUSE_STAGES.find(h => h.stage === farm.houseStage) ?? HOUSE_STAGES[0];
+    const nextHouse = HOUSE_STAGES.find(h => !farm.ownedHouses.includes(h.stage));
 
     const seedCards = useMemo(
         () =>
@@ -278,17 +308,25 @@ export default function FarmApp({ character, onBack }: { character?: CharacterPr
                     <span className="px-2.5 py-1 rounded-full bg-white/85 backdrop-blur text-[12px] font-bold text-emerald-700 shadow-sm">
                         Lv.{level}
                     </span>
-                    {level < 3 && (
-                        <span className="px-2 py-1 rounded-full bg-white/60 backdrop-blur text-[10px] text-slate-600">
+                    {level < MAX_LEVEL && (
+                        <span className="px-2 py-1 rounded-full bg-white/60 backdrop-blur text-[10px] text-slate-600 tabular-nums">
                             {progress.into}/{progress.need}
                         </span>
                     )}
                 </div>
+
+                <button
+                    onClick={() => setShopOpen(true)}
+                    className="shrink-0 px-2.5 py-1 rounded-full bg-white/85 backdrop-blur text-[11px] font-bold text-slate-700 shadow-sm cursor-pointer active:scale-95 flex items-center gap-1"
+                >
+                    🏠 {curHouse.name}
+                    {nextHouse && <span className="w-1.5 h-1.5 rounded-full bg-orange-400" />}
+                </button>
             </div>
 
             {/* 日报 */}
             {offer.length > 0 && (
-                <div className="relative z-10 mx-3 mt-1 rounded-2xl bg-white/92 backdrop-blur px-3.5 py-3 shadow-lg">
+                <div className="relative z-10 mx-3 mt-1 rounded-2xl bg-white/92 backdrop-blur px-3.5 py-3 shadow-lg self-start max-w-[300px]">
                     <div className="flex items-start gap-2">
                         <span className="text-base leading-none mt-0.5">🌤️</span>
                         <div className="flex-1 min-w-0">
@@ -320,68 +358,134 @@ export default function FarmApp({ character, onBack }: { character?: CharacterPr
 
             <div className="flex-1" />
 
-            {/* 种子栏 */}
-            <div className="relative z-10 shrink-0 px-3 pb-3" style={{ paddingBottom: 'calc(var(--safe-bottom, 0px) + 0.75rem)' }}>
+            {/* 底部：种子 + 地块 */}
+            <div className="relative z-10 shrink-0 px-3 pb-3" style={{ paddingBottom: 'calc(var(--safe-bottom, 0px) + 0.65rem)' }}>
                 {tutorialPending && (
                     <p className="mb-2 text-center text-[11px] text-white/95 drop-shadow">
                         先种一块麦子试试——浇水后一分钟就熟
                     </p>
                 )}
-                <div className="flex gap-2">
-                    {seedCards.map(({ def, unlocked, affordable }) => {
-                        const active = seed === def.id;
-                        return (
-                            <button
-                                key={def.id}
-                                onClick={() => {
-                                    if (!unlocked) {
-                                        addToast(`${def.name}要 ${def.level} 级才能种`);
-                                        return;
-                                    }
-                                    setSeed(def.id);
-                                }}
-                                className={`flex-1 rounded-2xl px-2 py-2 text-center transition-all cursor-pointer ${
-                                    active
-                                        ? 'bg-white shadow-md ring-2 ring-emerald-400'
-                                        : unlocked
-                                          ? 'bg-white/75 backdrop-blur'
-                                          : 'bg-white/45 backdrop-blur'
-                                }`}
-                            >
-                                <div className={`text-[13px] font-black ${unlocked ? 'text-slate-800' : 'text-slate-400'}`}>
-                                    {def.name}
-                                </div>
-                                <div className={`text-[9px] mt-0.5 ${unlocked ? 'text-slate-500' : 'text-slate-400'}`}>
-                                    {unlocked ? (
-                                        <>
-                                            种子 {def.seedCost} · 收成 {def.price}
-                                            {!affordable && ' · 钱不够'}
-                                        </>
-                                    ) : (
-                                        `Lv.${def.level} 解锁`
-                                    )}
-                                </div>
-                            </button>
-                        );
-                    })}
+                <div className="flex gap-2 items-end">
+                    <div className="flex gap-1.5 flex-1 min-w-0">
+                        {seedCards.map(({ def, unlocked, affordable }) => {
+                            const active = seed === def.id;
+                            return (
+                                <button
+                                    key={def.id}
+                                    onClick={() => {
+                                        if (!unlocked) {
+                                            addToast(`${def.name}要 ${def.level} 级才能种`);
+                                            return;
+                                        }
+                                        setSeed(def.id);
+                                    }}
+                                    className={`flex-1 rounded-2xl px-2 py-1.5 text-center transition-all cursor-pointer ${
+                                        active
+                                            ? 'bg-white shadow-md ring-2 ring-emerald-400'
+                                            : unlocked
+                                              ? 'bg-white/75 backdrop-blur'
+                                              : 'bg-white/45 backdrop-blur'
+                                    }`}
+                                >
+                                    <div className={`text-[12px] font-black leading-tight ${unlocked ? 'text-slate-800' : 'text-slate-400'}`}>
+                                        {def.name}
+                                    </div>
+                                    <div className={`text-[9px] mt-0.5 leading-tight ${unlocked ? 'text-slate-500' : 'text-slate-400'}`}>
+                                        {unlocked ? (
+                                            <>
+                                                籽{def.seedCost} · 收{def.price}
+                                                {!affordable && ' · 钱不够'}
+                                            </>
+                                        ) : (
+                                            `Lv.${def.level}`
+                                        )}
+                                    </div>
+                                </button>
+                            );
+                        })}
+                    </div>
                 </div>
 
-                {/* 地块状态：点哪块看哪块，也给无障碍留一条文字通道 */}
-                <div className="mt-2 flex gap-1.5">
+                {/* 地块状态：文字通道，也是竖屏时的主要入口 */}
+                <div className="mt-1.5 flex gap-1">
                     {farm.plots.map((plot, i) => (
                         <button
                             key={i}
                             onClick={() => clickRef.current(i)}
-                            className="flex-1 rounded-lg bg-white/60 backdrop-blur px-1 py-1 text-[9px] text-slate-600 leading-tight cursor-pointer active:bg-white/80"
+                            className="flex-1 min-w-0 rounded-lg bg-white/55 backdrop-blur px-1 py-1 text-[9px] text-slate-600 leading-tight cursor-pointer active:bg-white/80"
                         >
                             <span className="block font-bold text-slate-500">{i + 1}号</span>
-                            {plotSummary(plot, now)}
+                            <span className="block truncate">{plotSummary(plot, now)}</span>
                         </button>
                     ))}
                 </div>
             </div>
 
-            {/* 角色形象还原桥：和小屋同一套，藏在屏幕外 */}
+            {/* 房子商店 */}
+            {shopOpen && (
+                <div className="absolute inset-0 z-30 bg-black/45 backdrop-blur-sm flex items-end sm:items-center justify-center px-3 pb-3" onClick={() => setShopOpen(false)}>
+                    <div className="w-full max-w-[520px] rounded-2xl bg-white shadow-2xl p-3" onClick={e => e.stopPropagation()}>
+                        <div className="flex items-center justify-between mb-2">
+                            <div>
+                                <p className="text-[13px] font-black text-slate-800">修房子</p>
+                                <p className="text-[10px] text-slate-500 mt-0.5">够等级才能买，买过的随时能换回去</p>
+                            </div>
+                            <button onClick={() => setShopOpen(false)} className="text-slate-400 text-xl leading-none px-1 cursor-pointer">×</button>
+                        </div>
+
+                        <div className="space-y-1.5">
+                            {HOUSE_STAGES.map(h => {
+                                const owned = farm.ownedHouses.includes(h.stage);
+                                const stage = h.stage as HouseStage;
+                                const check = canBuyHouse(farm, stage);
+                                const active = farm.houseStage === h.stage;
+                                return (
+                                    <button
+                                        key={h.stage}
+                                        onClick={() => {
+                                            if (active) return;
+                                            if (owned) {
+                                                apply(setHouseStage(farm, stage, Date.now()), `换回「${h.name}」`);
+                                                return;
+                                            }
+                                            const r = buyHouse(farm, stage, Date.now());
+                                            if (apply(r, `修好了 · ${h.name}`)) setShopOpen(false);
+                                        }}
+                                        className={`w-full flex items-center gap-2.5 p-2 rounded-xl border text-left transition-colors ${
+                                            active
+                                                ? 'bg-emerald-50 border-emerald-300'
+                                                : owned
+                                                  ? 'bg-slate-50 border-slate-200 cursor-pointer'
+                                                  : check.ok
+                                                    ? 'bg-amber-50 border-amber-300 cursor-pointer'
+                                                    : 'bg-slate-50 border-slate-200 opacity-70'
+                                        }`}
+                                    >
+                                        <img src={`${import.meta.env.BASE_URL}farm/house-${h.stage}.png`} alt="" className="w-11 h-11 object-contain shrink-0" />
+                                        <div className="flex-1 min-w-0">
+                                            <p className="text-[12px] font-black text-slate-800">{h.name}</p>
+                                            <p className="text-[10px] text-slate-500 mt-0.5">
+                                                {h.stage === 1 ? '一开始就有的破屋子' : `Lv.${h.level} 解锁 · ${h.cost} 币`}
+                                            </p>
+                                        </div>
+                                        <span className={`text-[10px] font-bold shrink-0 ${
+                                            active ? 'text-emerald-600' : owned ? 'text-slate-500' : check.ok ? 'text-amber-700' : 'text-slate-400'
+                                        }`}>
+                                            {active ? '当前' : owned ? '换上' : check.ok ? '购买' : (level < h.level ? `Lv.${h.level}` : '金币不足')}
+                                        </span>
+                                    </button>
+                                );
+                            })}
+                        </div>
+
+                        {level >= MAX_LEVEL && (
+                            <p className="mt-2 text-[10px] text-slate-400 text-center">这一版到 Lv.10，下一版会有草莓、南瓜和院子装饰</p>
+                        )}
+                    </div>
+                </div>
+            )}
+
+            {/* 角色形象还原桥 */}
             {savedState && (
                 <div style={{ position: 'fixed', left: -9999, top: 0, width: 1, height: 1, overflow: 'hidden' }}>
                     <CreatorRollBridge
