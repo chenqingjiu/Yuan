@@ -37,10 +37,14 @@ const FIELD_Z = 0.1;
 const HOUSE_X = -4.55;
 const HOUSE_Z = -2.9;
 
-/** 相机：绕目标左右各 60°，俯角 22° */
+/** 相机：绕目标左右各 42°，俯角 16°。再大房子侧面就露馅了 */
 const CAM_AZ_LIMIT = (42 * Math.PI) / 180;
 const CAM_ELEV = (16 * Math.PI) / 180;
 const CAM_TARGET = new THREE.Vector3(-2.2, 0.85, -0.9);
+
+/** 背景板：离场景 48 米，14 米高，底边压到地面以下，接缝藏在草里 */
+const BACKDROP_DIST = 48;
+const BACKDROP_Y = 2;
 
 /** 作物四个阶段的「内容高度」（米），不是贴图尺寸 */
 const STAGE_HEIGHT = [0, 0.26, 0.44, 0.62, 0.82];
@@ -109,6 +113,7 @@ export class FarmScene {
     private blinkUntil = 0;
 
     private billboards: THREE.Object3D[] = [];
+    private backdropPivot = new THREE.Group();
     private blobTex: THREE.Texture | null = null;
     private actorShadow: THREE.Mesh | null = null;
     private drops: { mesh: THREE.Mesh; vy: number; life: number }[] = [];
@@ -222,19 +227,27 @@ export class FarmScene {
     }
 
     /**
-     * 远景：半圈弧形，不是一张平面。
-     * 平面转到 ±60° 会把直角边露出来，弧面无论转到哪都在画面外。
+     * 远景：一块跟着相机一起转的背景板。
+     * 弧面贴图的 UV 方向、绕一圈的横向拉伸都很难控（试过，山会跑到头顶），
+     * 改成整块平板 + 按相机方位同步旋转，永远正对镜头，也就永远不会露边。
      */
     private buildBackdrop() {
         const tex = this.loadTex(`${BASE}farm/bg-far.png`, 'bg');
-        const geo = new THREE.CylinderGeometry(21, 21, 20, 64, 1, true, Math.PI, Math.PI);
+        tex.wrapS = THREE.MirroredRepeatWrapping;
+        tex.wrapT = THREE.ClampToEdgeWrapping;
+        // 板子 120×16，图片 3:2，横向铺 5 份才不变形；镜像重复能藏住接缝
+        tex.repeat.set(5, 1);
+        tex.needsUpdate = true;
+
+        this.backdropPivot.position.set(CAM_TARGET.x, 0, CAM_TARGET.z);
         const mesh = new THREE.Mesh(
-            geo,
-            new THREE.MeshBasicMaterial({ map: tex, fog: false, side: THREE.BackSide, depthWrite: false }),
+            new THREE.PlaneGeometry(120, 16),
+            new THREE.MeshBasicMaterial({ map: tex, fog: false, depthWrite: false, toneMapped: false }),
         );
-        mesh.position.set(-2, 8.4, -3.0);
+        mesh.position.set(0, BACKDROP_Y, -BACKDROP_DIST);
         mesh.renderOrder = -1;
-        this.scene.add(mesh);
+        this.backdropPivot.add(mesh);
+        this.scene.add(this.backdropPivot);
     }
 
     private plotPos(i: number) {
@@ -757,6 +770,8 @@ export class FarmScene {
         this.stepDrops(dt);
         // 小件始终面向镜头：它们是平面卡片，侧着看会变成一条线
         for (const b of this.billboards) b.rotation.y = this.az;
+        // 背景板跟着相机转，永远正对镜头
+        this.backdropPivot.rotation.y = this.az;
         this.renderer.render(this.scene, this.camera);
     };
 
