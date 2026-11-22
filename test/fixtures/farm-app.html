@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="zh-CN" translate="no">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>一块田 · 界面预览</title>
+    <!-- 和 index.html 一样走运行时 tailwind，否则类名不生效，HUD 会掉到画面外 -->
+    <script src="/vendor/tailwind-3.4.17.js"></script>
+    <style>
+        html, body, #root { margin: 0; height: 100%; overflow: hidden; }
+        body { font-family: 'Nunito', 'Noto Sans SC', system-ui, sans-serif; }
+    </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="module" src="./farm-app.tsx"></script>
+</body>
+</html>

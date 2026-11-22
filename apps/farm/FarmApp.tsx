@@ -32,6 +32,28 @@ const CROP_ORDER: CropId[] = ['wheat', 'corn', 'carrot'];
 const ACTION_MS = 1700;
 const APPLY_AT = 850;
 
+/** 竖屏提示：院子是横着铺开的，竖着看只剩中间一条 */
+function RotateHint() {
+    return (
+        <div className="absolute inset-0 z-50 bg-[#0d1710] flex flex-col items-center justify-center text-center px-8">
+            <div className="text-5xl mb-6 animate-[spin_2.4s_ease-in-out_infinite]">📱</div>
+            <p className="text-white text-base font-black">把手机横过来</p>
+            <p className="text-emerald-200/70 text-[12px] mt-2 leading-relaxed">
+                房子在前、六块地在后，横屏才看得全
+                <br />转过来画面会自动铺满
+            </p>
+            <button
+                onClick={() => (document.documentElement as never as { requestFullscreen?: () => Promise<void> })
+                    .requestFullscreen?.()
+                    ?.catch?.(() => {})}
+                className="mt-6 px-5 py-2 rounded-full bg-emerald-400 text-[#0d2417] text-[12px] font-black cursor-pointer active:scale-95 transition-transform"
+            >
+                全屏试试
+            </button>
+        </div>
+    );
+}
+
 /**
  * 一块田 —— 院子里的六块地。
  *
@@ -41,7 +63,10 @@ const APPLY_AT = 850;
 export default function FarmApp({ character, onBack }: { character?: CharacterProfile; onBack: () => void }) {
     const { addToast } = useOS();
     const hostRef = useRef<HTMLDivElement>(null);
+    const rootRef = useRef<HTMLDivElement>(null);
     const sceneRef = useRef<FarmScene | null>(null);
+    /** 这块田是按横屏构图做的，竖屏先请人转过来 */
+    const [landscape, setLandscape] = useState(true);
 
     const storageKey = `farm_state_v2_${character?.id ?? 'guest'}`;
 
@@ -68,6 +93,25 @@ export default function FarmApp({ character, onBack }: { character?: CharacterPr
     const [extraItems, setExtraItems] = useState<unknown[]>();
     const [creatorReady, setCreatorReady] = useState(false);
     const [shopOpen, setShopOpen] = useState(false);
+
+    useEffect(() => {
+        const el = rootRef.current;
+        const check = () => {
+            const w = el?.clientWidth || window.innerWidth;
+            const h = el?.clientHeight || window.innerHeight;
+            setLandscape(w > h);
+        };
+        check();
+        const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(check) : null;
+        if (ro && el) ro.observe(el);
+        window.addEventListener('resize', check);
+        window.addEventListener('orientationchange', check);
+        return () => {
+            ro?.disconnect();
+            window.removeEventListener('resize', check);
+            window.removeEventListener('orientationchange', check);
+        };
+    }, []);
 
     const [actorHair, setActorHair] = useState<HairSettings>(() => ({
         layers: {},
@@ -120,7 +164,11 @@ export default function FarmApp({ character, onBack }: { character?: CharacterPr
 
         const onResize = () => scene.resize();
         window.addEventListener('resize', onResize);
+        // 没有存档形象（访客、或形象桥还没回来）时先摆个占位小人：
+        // 场景里没有可动的身体，走路回调不会触发，点地块就会没反应。
+        const placeholderTimer = window.setTimeout(() => scene.setPlaceholderActor(), 1200);
         return () => {
+            window.clearTimeout(placeholderTimer);
             window.removeEventListener('resize', onResize);
             scene.dispose();
             sceneRef.current = null;
@@ -283,7 +331,7 @@ export default function FarmApp({ character, onBack }: { character?: CharacterPr
     );
 
     return (
-        <div className="h-full w-full flex flex-col bg-[#bfe3f2] relative overflow-hidden select-none">
+        <div ref={rootRef} className="h-full w-full flex flex-col bg-[#bfe3f2] relative overflow-hidden select-none">
             <div ref={hostRef} className="absolute inset-0" />
 
             {/* 顶栏 */}
@@ -359,13 +407,16 @@ export default function FarmApp({ character, onBack }: { character?: CharacterPr
             <div className="flex-1" />
 
             {/* 底部：种子 + 地块 */}
-            <div className="relative z-10 shrink-0 px-3 pb-3" style={{ paddingBottom: 'calc(var(--safe-bottom, 0px) + 0.65rem)' }}>
+            <div
+                className={`relative z-10 shrink-0 px-3 ${landscape ? 'pb-1.5' : 'pb-3'}`}
+                style={{ paddingBottom: landscape ? 'calc(var(--safe-bottom, 0px) + 0.4rem)' : 'calc(var(--safe-bottom, 0px) + 0.65rem)' }}
+            >
                 {tutorialPending && (
-                    <p className="mb-2 text-center text-[11px] text-white/95 drop-shadow">
+                    <p className={`text-center text-white/95 drop-shadow ${landscape ? 'mb-1 text-[10px]' : 'mb-2 text-[11px]'}`}>
                         先种一块麦子试试——浇水后一分钟就熟
                     </p>
                 )}
-                <div className="flex gap-2 items-end">
+                <div className={`flex items-end ${landscape ? 'gap-1.5 max-w-[560px]' : 'gap-2'}`}>
                     <div className="flex gap-1.5 flex-1 min-w-0">
                         {seedCards.map(({ def, unlocked, affordable }) => {
                             const active = seed === def.id;
@@ -379,7 +430,7 @@ export default function FarmApp({ character, onBack }: { character?: CharacterPr
                                         }
                                         setSeed(def.id);
                                     }}
-                                    className={`flex-1 rounded-2xl px-2 py-1.5 text-center transition-all cursor-pointer ${
+                                    className={`flex-1 rounded-2xl px-2 text-center transition-all cursor-pointer ${landscape ? 'py-1' : 'py-1.5'} ${
                                         active
                                             ? 'bg-white shadow-md ring-2 ring-emerald-400'
                                             : unlocked
@@ -406,19 +457,21 @@ export default function FarmApp({ character, onBack }: { character?: CharacterPr
                     </div>
                 </div>
 
-                {/* 地块状态：文字通道，也是竖屏时的主要入口 */}
-                <div className="mt-1.5 flex gap-1">
-                    {farm.plots.map((plot, i) => (
-                        <button
-                            key={i}
-                            onClick={() => clickRef.current(i)}
-                            className="flex-1 min-w-0 rounded-lg bg-white/55 backdrop-blur px-1 py-1 text-[9px] text-slate-600 leading-tight cursor-pointer active:bg-white/80"
-                        >
-                            <span className="block font-bold text-slate-500">{i + 1}号</span>
-                            <span className="block truncate">{plotSummary(plot, now)}</span>
-                        </button>
-                    ))}
-                </div>
+                {/* 地块状态文字通道：横屏时地面上的地块能直接点，这排会挡画面，只留竖屏 */}
+                {!landscape && (
+                    <div className="mt-1.5 flex gap-1">
+                        {farm.plots.map((plot, i) => (
+                            <button
+                                key={i}
+                                onClick={() => clickRef.current(i)}
+                                className="flex-1 min-w-0 rounded-lg bg-white/55 backdrop-blur px-1 py-1 text-[9px] text-slate-600 leading-tight cursor-pointer active:bg-white/80"
+                            >
+                                <span className="block font-bold text-slate-500">{i + 1}号</span>
+                                <span className="block truncate">{plotSummary(plot, now)}</span>
+                            </button>
+                        ))}
+                    </div>
+                )}
             </div>
 
             {/* 房子商店 */}
@@ -512,6 +565,8 @@ export default function FarmApp({ character, onBack }: { character?: CharacterPr
                     />
                 </div>
             )}
+
+            {!landscape && <RotateHint />}
         </div>
     );
 }

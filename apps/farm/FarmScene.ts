@@ -32,7 +32,7 @@ const PLOT_SIZE = 1.16;
 const GAP_X = 1.6;
 const GAP_Z = 1.78;
 const FIELD_X = -0.75;
-const FIELD_Z = 0.1;
+const FIELD_Z = -0.55;
 
 const HOUSE_X = -4.55;
 const HOUSE_Z = -2.9;
@@ -546,6 +546,11 @@ export class FarmScene {
         if (this.actor) {
             this.actor.root.removeFromParent();
             this.actor.dispose();
+        }
+        // 形象加载慢的时候先站了个占位小人，真身到了就换下来
+        if (this.placeholder) {
+            this.placeholder.removeFromParent();
+            this.placeholder = null;
         }
         this.actor = visitor;
         visitor.root.position.set(0, 0, 0);
