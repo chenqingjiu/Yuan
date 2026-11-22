@@ -60,19 +60,10 @@ jobs:
       - name: Verify build asset retention
         run: node --test scripts/prepare-retained-build-assets.test.mjs
 
-      # Keep previous hashed chunks reachable by tabs that are still running them.
-      # Restore after build so historical files never enter the new SW manifest.
-      - name: Restore previous build assets
-        id: retained-assets
-        uses: actions/cache/restore@v4
-        with:
-          path: .cache/retained-build-assets
-          key: site-assets-pages-v1-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: site-assets-pages-v1-${{ github.ref_name }}-
-
-      - name: Retain recent hashed build assets
-        run: node scripts/prepare-retained-build-assets.mjs --dist dist --history .cache/retained-build-assets
-
+      # GitHub Pages 不做历史 chunk 保留：保留机制会把每次构建的旧文件累积进 dist
+      # （实测可达 250MB+ 超过 Pages artifact 上限，导致上传"成功"但 deploy 时
+      # Found 0 artifact(s)）。Pages 每次部署是原子切换，旧标签页由 startup-recovery
+      # 的「检查更新并修复」自我修复；历史 chunk 保留只留给 Cloudflare 站点。
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
@@ -84,9 +75,3 @@ jobs:
         uses: actions/deploy-pages@v4
         with:
           artifact_name: ${{ env.PAGES_ARTIFACT_NAME }}
-
-      - name: Save deployed build assets
-        uses: actions/cache/save@v4
-        with:
-          path: .cache/retained-build-assets
-          key: ${{ steps.retained-assets.outputs.cache-primary-key }}
