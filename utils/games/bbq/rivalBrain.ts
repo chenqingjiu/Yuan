@@ -8,7 +8,7 @@
  * 真正的请求由调用方用 callGameApi 发。
  */
 
-import { ATTACK_COUNT, type ItemId } from './engine';
+import { ATTACK_COUNT, ROUND_MIN, type ItemId } from './engine';
 
 export interface AttackContext {
     rivalName: string;
@@ -54,7 +54,7 @@ const ITEM_CN: Record<ItemId, string> = {
 export function buildAttackPrompt(ctx: AttackContext): { system: string; user: string } {
     const lead = ctx.rivalMoney - ctx.myMoney;
     const system = [
-        `你在夜市摆烧烤摊，跟用户是对门的两家，正在比五分钟谁卖得多。你是「${ctx.rivalName}」。`,
+        `你在夜市摆烧烤摊，跟用户是对门的两家，正在比 ${ROUND_MIN} 分钟谁卖得多。你是「${ctx.rivalName}」。`,
         ctx.persona ? `你的人设：${ctx.persona}` : '',
         '',
         '你手上有几张「捣乱牌」，一局只能打三次，打出去能让对面难受一小会儿：',
@@ -71,7 +71,7 @@ export function buildAttackPrompt(ctx: AttackContext): { system: string; user: s
     ].filter(Boolean).join('\n');
 
     const user = [
-        `现在是第 ${ctx.minute} 分钟（一局五分钟）。`,
+        `现在是第 ${ctx.minute} 分钟（一局 ${ROUND_MIN} 分钟）。`,
         `营业额：你 ¥${ctx.rivalMoney}，对面 ¥${ctx.myMoney}，${lead > 0 ? `你领先 ¥${lead}` : lead < 0 ? `你落后 ¥${-lead}` : '打平'}。`,
         `对面摊上：${ctx.myWaiting} 位客人正在等${ctx.myGrillFull ? '，四个炉位全满' : ''}，已经上了 ${ctx.myServed} 单。`,
         `你自己：上了 ${ctx.rivalServed} 单。`,

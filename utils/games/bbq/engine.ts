@@ -2,7 +2,7 @@
  * 夜市烧烤对决 —— 纯逻辑（不碰 DOM、不碰网络，全部可单测）。
  *
  * 一局的流程：客人来 → 点肉/菜/辣度自动成串 → 上炉 → 半熟时翻面 → 熟时上菜 → 收钱。
- * 4 个炉位并行，5 分钟打烊，比营业额。
+ * 4 个炉位并行，一局 4 分钟打烊，比营业额。
  *
  * 对手：自己按节奏出单（本地规则算，不花 token），但有 3 次捣乱机会，
  * 什么时候用、用什么、说句什么，由外部（rivalBrain）决定后调 applyRivalAttack 落地。
@@ -22,6 +22,8 @@ export const WAIT_CAP = 3;
 export const MAX_GUESTS = 3;
 /** 一局时长 */
 export const ROUND_MS = 4 * 60 * 1000;
+/** 一局多少分钟，给文案用（避免各处再写一遍「五分钟」） */
+export const ROUND_MIN = ROUND_MS / 60000;
 /** 顾客耐心：30 秒。不跟着局时一起缩 */
 export const PATIENCE_MS = 30000;
 /** 没有上菜时的兜底来客间隔 */
@@ -34,6 +36,13 @@ const SERVE_GAP_MAX = 8000;
 export const ATTACK_COUNT = 3;
 /** 被砸一次，下一次攻击提前多少 */
 const ATTACK_HURRY_MS = 15000;
+/**
+ * 三张牌分别落在局时的 17% / 53% / 83% 附近。
+ * 必须按比例算，不能写死秒数——原来写的是 50/160/248 秒，
+ * 局时改成 4 分钟后第三张 248 秒已经超过 240 秒，永远打不出来。
+ */
+const ATTACK_AT = [0.167, 0.533, 0.827];
+const ATTACK_JITTER = [0.04, 0.05, 0.04];
 
 export interface Order {
     id: number;
@@ -251,11 +260,9 @@ export function createGame(opts: {
             forceBad: false,
             line: '今晚这街归我',
             lineAt: opts.now,
-            attackSlots: [
-                opts.now + 50000 + Math.floor(rand() * 12000),
-                opts.now + 160000 + Math.floor(rand() * 15000),
-                opts.now + 248000 + Math.floor(rand() * 12000),
-            ],
+            attackSlots: ATTACK_AT.map((p, i) =>
+                opts.now + Math.floor(ROUND_MS * (p + rand() * ATTACK_JITTER[i])),
+            ),
             attacksUsed: 0,
         },
         events: [],

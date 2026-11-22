@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
     ATTACK_COUNT,
+    ROUND_MS,
     applyRivalAttack,
     attacksLeft,
     createGame,
@@ -119,8 +120,9 @@ describe('对手捣乱', () => {
     it('三次机会的时刻分布在局内，被砸会提前', () => {
         const s = createGame({ now: T0, rivalName: '苏利', rand: even });
         const first = nextAttackAt(s.rival);
-        expect(first).toBeGreaterThan(T0 + 45000);
-        expect(first).toBeLessThan(T0 + 70000);
+        // 第一张在局时的 17% 附近，跟着 ROUND_MS 一起缩放
+        expect(first).toBeGreaterThan(T0 + ROUND_MS * 0.16);
+        expect(first).toBeLessThan(T0 + ROUND_MS * 0.22);
         const hit = useItem({ ...s, energy: 5 }, 'horn', T0 + 10000);
         expect(nextAttackAt(hit.rival)).toBe(first - 15000);
     });

@@ -15,6 +15,7 @@ import {
 import {
     ATTACK_COUNT,
     ITEMS,
+    ROUND_MIN,
     ROUND_MS,
     SLOT_COUNT,
     applyRivalAttack,
@@ -331,7 +332,7 @@ export default function BbqApp({ onBack }: Props) {
         return {
             rivalName: s.rival.name,
             persona: rival?.systemPrompt?.slice(0, 160),
-            minute: Math.min(5, Math.floor((s.now - s.startedAt) / 60000) + 1),
+            minute: Math.min(ROUND_MIN, Math.floor((s.now - s.startedAt) / 60000) + 1),
             myMoney: s.money,
             rivalMoney: s.rival.money,
             myWaiting: waiting.length,
@@ -500,7 +501,7 @@ export default function BbqApp({ onBack }: Props) {
         const transcript = timelineText(game);
         const myHits = game.events.filter((e) => e.actor === 'you' && e.kind === 'item').length;
         const content = [
-            `刚和你在夜市各摆了一个烧烤摊，比了五分钟。`,
+            `刚和你在夜市各摆了一个烧烤摊，比了 ${ROUND_MIN} 分钟。`,
             sm.win ? `结果：我 ¥${sm.money}，你 ¥${sm.rivalMoney}，我赢你 ¥${sm.diff}。` : sm.draw ? `结果：打平，都是 ¥${sm.money}。` : `结果：我 ¥${sm.money}，你 ¥${sm.rivalMoney}，你赢我 ¥${sm.diff}。`,
             `我一共上了 ${sm.served} 单，其中 ${sm.perfect} 单零失误；糊了 ${sm.burnt} 串，还有 ${sm.missed} 位客人等不及走了。`,
             `你那边上了 ${sm.rivalServed} 单${sm.rivalBurned ? `，糊了 ${sm.rivalBurned} 串` : ''}。`,
@@ -553,7 +554,7 @@ export default function BbqApp({ onBack }: Props) {
                         <p className="text-lg font-black">🔥 夜市烧烤对决</p>
                         <p className="text-[12px] text-amber-100/90 mt-1 leading-relaxed">
                             你和 TA 各守一个摊，抢同一条街的客人。
-                            五分钟，比谁赚得多。中途可以互相捣乱。
+                            {ROUND_MIN} 分钟，比谁赚得多。中途可以互相捣乱。
                         </p>
                     </div>
 

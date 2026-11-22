@@ -1,14 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import {
+    ATTACK_COUNT,
     ITEMS,
     ROUND_MS,
     SLOT_COUNT,
     STAGE_MS,
+    applyRivalAttack,
     canFlip,
     canServe,
     createGame,
     discard,
     flip,
+    nextAttackAt,
     pickFood,
     pickSpicy,
     placeOnGrill,
@@ -213,8 +216,44 @@ describe('道具', () => {
     });
 });
 
+describe('对手出牌节奏', () => {
+    it('三张牌都落在这一局之内，第三张不会晚于终场', () => {
+        for (const r of [0, 0.5, 0.999]) {
+            const s = createGame({ now: T0, rivalName: '苏利', rand: () => r });
+            const rel = s.rival.attackSlots.map((t) => t - T0);
+            expect(rel).toHaveLength(3);
+
+            for (const t of rel) {
+                expect(t).toBeGreaterThan(0);
+                // 留 10 秒余量，否则牌刚要生效这局就结算了
+                expect(t).toBeLessThan(ROUND_MS - 10000);
+            }
+
+            // 一张比一张晚，中间不能挤在一起
+            expect(rel[1]).toBeGreaterThan(rel[0] + 20000);
+            expect(rel[2]).toBeGreaterThan(rel[1] + 20000);
+        }
+    });
+
+    it('跑完整局，三张牌都会打出来', () => {
+        let s = createGame({ now: T0, rivalName: '苏利', rand: Math.random });
+        let guard = 0;
+        // 简化版主循环：每 100ms 推一次，到点就出一张牌
+        while (s.phase === 'playing' && guard++ < 4000) {
+            const now = s.now + 100;
+            s = tick(s, now, Math.random);
+            const due = nextAttackAt(s.rival);
+            if (due > 0 && now >= due) {
+                s = applyRivalAttack(s, { item: 'horn', line: '让让' }, now);
+            }
+        }
+        expect(s.phase).toBe('over');
+        expect(s.rival.attacksUsed).toBe(ATTACK_COUNT);
+    });
+});
+
 describe('整局', () => {
-    it('五分钟能跑完，不死循环，玩家按规则操作能赚到钱', () => {
+    it('一局能跑完，不死循环，玩家按规则操作能赚到钱', () => {
         let s = createGame({ now: T0, rivalName: '苏利', rand: Math.random });
         const STEP = 120;
         let guard = 0;
