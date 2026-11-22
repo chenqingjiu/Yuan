@@ -1,7 +1,7 @@
 // 群聊提示词构建 —— 从 GroupChat.tsx 抽出的纯函数，导演模式模板"搬家不改字"，
 // 供导演模式与轮询模式（每成员一次调用）共用。
 import { Message, CharacterProfile, EmojiCategory } from '../../types';
-import { stickerNameFromUrl } from '../messageFormat';
+import { stickerNameFromUrl, normalizeMessageContent } from '../messageFormat';
 import { isBlobRef } from '../blobRef';
 import { packetHistoryLine } from './redpacket';
 import { formatRelativeAge } from './relativeTime';
@@ -151,6 +151,11 @@ export function buildGroupHistoryBlock(
             // 回执行自带完整句子（[系统: X 领取了 Y 的红包]），不加名字前缀
             if (m.metadata?.packetReceipt) { lines.push(`${timePrefix}${packetHistoryLine(m, nameOf, now)}`); return; }
             content = packetHistoryLine(m, nameOf, now);
+        } else if (m.type === 'xhs_card' || m.type === 'webpage_card') {
+            // 卡片正文不在这条消息的 content 里（content 只是标题），走 rawText 的话
+            // 成员只知道「有一篇叫 X 的笔记」却读不到正文。复用私聊的归一化，把正文、
+            // 作者、评论区、画面描述一并展开——私聊和群聊看到的内容口径也就一致了。
+            content = normalizeMessageContent(m, name, nameOf('user'));
         } else if (isMediaValue(rawText)) {
             // 令牌也算媒体：漏认会把它当正文内联进 prompt，出门时还被还原成整段 data URL
             content = '[媒体]';

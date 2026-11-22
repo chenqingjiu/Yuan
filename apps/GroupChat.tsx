@@ -55,6 +55,10 @@ import {
 } from '../utils/videoMessage';
 import { describeVideoForMessage } from '../utils/videoApi';
 import { buildReplySnapshotContent } from '../utils/applyAssistantPostProcessing';
+import { buildXhsNoteCard } from '../utils/xhsLinkCard';
+import { describeXhsNoteMedia } from '../utils/xhsMedia';
+import { getProxyWorkerUrl } from '../utils/proxyWorker';
+import XhsNoteCard from '../components/chat/XhsNoteCard';
 import ChromeCssEditor from '../components/chat/ChromeCssEditor';
 import WhiteboxSoundEditor from '../components/chat/WhiteboxSoundEditor';
 import HtmlCard from '../components/chat/HtmlCard';
@@ -404,6 +408,21 @@ const GroupMessageItem = React.memo(({
                         <GroupPacketCard msg={msg} nameOf={nameOf} onOpen={selectionMode ? undefined : onPacketClick} />
                     </div>
                 );
+            case 'xhs_card': {
+                const note = msg.metadata?.xhsNote;
+                if (!note) {
+                    return (
+                        <div className="px-4 py-3 rounded-2xl bg-red-50 text-red-400 text-xs italic border border-red-100">
+                            [小红书卡片数据缺失]
+                        </div>
+                    );
+                }
+                return (
+                    <div onClick={(e) => { if (selectionMode) handleClick(e); }}>
+                        <XhsNoteCard note={note} isUser={msg.role === 'user'} />
+                    </div>
+                );
+            }
             case 'html_card': {
                 const html = typeof msg.metadata?.htmlSource === 'string' ? msg.metadata.htmlSource : '';
                 if (!html) {
@@ -1016,6 +1035,58 @@ const GroupChat: React.FC = () => {
 
             const savedId = await DB.saveMessage(newMessage);
             sent = true;
+            let finalId = savedId;
+
+            // 小红书链接 → xhs_card（与私聊共用 utils/xhsLinkCard 的解析）。
+            // 不建卡的话，群里这条消息只是一串 URL，成员读不到正文，只能说“打不开”。
+            if (type === 'text' && savedId) {
+                const built = await buildXhsNoteCard(content, {
+                    xhsMcp: realtimeConfig?.xhsMcpConfig,
+                }).catch(() => null);
+                if (built?.ok) {
+                    const cardId = await DB.saveMessage({
+                        charId: 'user',
+                        groupId: activeGroup.id,
+                        role: 'user',
+                        type: 'xhs_card',
+                        content: built.note.title || '小红书笔记',
+                        metadata: {
+                            xhsNote: built.note,
+                            originalShareText: built.originalShareText,
+                            originalShareUrl: built.originalShareUrl,
+                        },
+                    });
+                    if (cardId) {
+                        // 原文已完整存进卡片 metadata，去掉重复的文字消息。
+                        await DB.deleteMessage(savedId);
+                        finalId = cardId;
+                        // 配图/视频的画面描述跑在后台：卡片先发出去，识别慢一点不影响分享。
+                        const hasMedia = (built.note.imageUrls?.length || 0) > 0 || !!built.note.videoUrl;
+                        if (hasMedia) {
+                            void (async () => {
+                                try {
+                                    const mediaDesc = await describeXhsNoteMedia(built.note as any, {
+                                        proxyBase: realtimeConfig?.xhsMcpConfig?.serverUrl || getProxyWorkerUrl(),
+                                        visionApi: apiConfig?.visionApi,
+                                        videoApi: apiConfig?.videoApi,
+                                    });
+                                    if (!mediaDesc) return;
+                                    await DB.updateMessageMetadata(cardId, (prev: any) => ({
+                                        ...(prev || {}),
+                                        xhsNote: { ...(prev?.xhsNote || built.note), mediaDesc, mediaDescAt: Date.now() },
+                                    }));
+                                    await refreshMessages(activeGroup.id);
+                                } catch (e) {
+                                    console.warn('[XhsMedia] describe failed:', e);
+                                }
+                            })();
+                        }
+                    }
+                }
+                // 解析失败只提示，不阻断：原消息已经发出去并被保留了。
+                built?.notices.forEach(n => addToast(n, 'info'));
+            }
+
             await refreshMessages(activeGroup.id);
             markGroupMembersDirty(activeGroup.members);
 
@@ -1026,8 +1097,8 @@ const GroupChat: React.FC = () => {
             // 表情联想发送复用这里；表情发出后保留尚未发送的文字草稿。
             if (type === 'text') setInput(current => current === content ? '' : current);
 
-            // 返回落库 id：视频要拿着它去后台补画面描述。
-            return savedId;
+            // 返回落库 id：视频要拿着它去后台补画面描述；建了小红书卡片时是卡片那条的 id。
+            return finalId;
         } finally {
             finishSend(sent && ['text', 'image', 'video', 'emoji'].includes(type));
         }
