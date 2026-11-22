@@ -92,3 +92,15 @@ describe('群聊中的 U 与关系连续性', () => {
         expect(prompt).toContain('按你自己和 U 的关系反应');
     });
 });
+
+describe('轮询模式 · 一轮可以多说几条', () => {
+    const history = { text: '用户: 今天大家聊什么？', attachedImages: [], attachedImagesNote: '' };
+
+    it('给出 1~3 条的区间、允许到 4 条，同时明确不要硬拆凑数', () => {
+        const prompt = buildRoundRobinInstruction('小夏', history, '无');
+
+        expect(prompt).toContain('一轮通常 1~3 条');
+        expect(prompt).toContain('可以发到 4 条');
+        expect(prompt).toContain('不要为了凑数');
+    });
+});

@@ -12,6 +12,7 @@ import { DB } from '../utils/db';
 import { Message, GroupProfile, CharacterProfile, MessageType, ChatTheme, BubbleStyle, EmojiCategory } from '../types';
 import { safeResponseJson } from '../utils/safeApi';
 import Modal from '../components/os/Modal';
+import MemberModelList from '../components/group/MemberModelList';
 import DialogueVoicePanel from '../components/voice/DialogueVoicePanel';
 import type { DialogueLine } from '../utils/elevenLabsStream';
 import { ContextBuilder } from '../utils/context';
@@ -634,7 +635,9 @@ const GroupChat: React.FC = () => {
     const [tempGroupName, setTempGroupName] = useState('');
     const [tempPrivateContextCap, setTempPrivateContextCap] = useState<number>(80);
     const [tempMemberTimelineCap, setTempMemberTimelineCap] = useState<number>(DEFAULT_MEMBER_TIMELINE_CAP);
-    const [tempReplyMode, setTempReplyMode] = useState<'director' | 'roundRobin'>('director');
+    // 默认走轮询：每位成员各自调用模型、各自说话。导演模式是一次调用生成整轮，
+    // 只能共用一个模型，所以不再是默认值（老群没有该字段时也按轮询处理）。
+    const [tempReplyMode, setTempReplyMode] = useState<'director' | 'roundRobin'>('roundRobin');
     const [tempMemberBubbleIndependent, setTempMemberBubbleIndependent] = useState(false);
     const [tempUserBubbleThemeId, setTempUserBubbleThemeId] = useState<string>('');
     const [selectedMembers, setSelectedMembers] = useState<Set<string>>(new Set());
@@ -1244,7 +1247,7 @@ const GroupChat: React.FC = () => {
         setTempGroupName(activeGroup?.name || '');
         setTempPrivateContextCap(activeGroup?.privateContextCap ?? 80);
         setTempMemberTimelineCap(activeGroup?.memberTimelineCap ?? DEFAULT_MEMBER_TIMELINE_CAP);
-        setTempReplyMode(activeGroup?.replyMode ?? 'director');
+        setTempReplyMode(activeGroup?.replyMode ?? 'roundRobin');
         setTempMemberBubbleIndependent(activeGroup?.memberBubbleIndependent ?? false);
         setTempUserBubbleThemeId(activeGroup?.userBubbleThemeId ?? '');
         if (activeGroup) void loadTopicBoxStats(activeGroup);
@@ -1741,7 +1744,7 @@ ${memberTimeline || '(暂无互动记录)'}
         // 避免“用户没点加载历史 → AI 也只能看见 50 条”的耦合。
         const promptCap = Math.max(contextLimit, activeGroup.memberTimelineCap ?? DEFAULT_MEMBER_TIMELINE_CAP, GROUP_TOPIC_HOT_ZONE);
         const { messages: freshMsgs } = await DB.getRecentGroupMessagesWithCount(activeGroup.id, promptCap);
-        if (activeGroup?.replyMode === 'roundRobin') {
+        if ((activeGroup?.replyMode ?? 'roundRobin') === 'roundRobin') {
             triggerRoundRobin(freshMsgs);
         } else {
             triggerDirector(freshMsgs);
@@ -2189,20 +2192,30 @@ ${memberTimeline || '(暂无互动记录)'}
                         <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">回复生成模式</label>
                         <div className="flex flex-col gap-2">
                             <div
-                                onClick={() => { setTempReplyMode('director'); trackEvent('切换群聊回复生成模式', { mode: 'director' }); }}
-                                className={`p-3 rounded-xl border cursor-pointer transition-all ${tempReplyMode === 'director' ? 'border-violet-400 bg-violet-50 ring-1 ring-violet-400' : 'border-slate-200 bg-white hover:border-slate-300'}`}
-                            >
-                                <div className="text-xs font-bold text-slate-700">导演模式（默认）</div>
-                                <p className="text-[9px] text-slate-400 mt-1 leading-tight">一次 API 调用生成整轮群聊。快、省 token，但角色偶尔可能串号。</p>
-                            </div>
-                            <div
                                 onClick={() => { setTempReplyMode('roundRobin'); trackEvent('切换群聊回复生成模式', { mode: 'roundRobin' }); }}
                                 className={`p-3 rounded-xl border cursor-pointer transition-all ${tempReplyMode === 'roundRobin' ? 'border-violet-400 bg-violet-50 ring-1 ring-violet-400' : 'border-slate-200 bg-white hover:border-slate-300'}`}
                             >
-                                <div className="text-xs font-bold text-slate-700">轮询模式</div>
-                                <p className="text-[9px] text-slate-400 mt-1 leading-tight">每位成员单独调用一次 API，按顺序逐个发言（每人必发言）。更真实、彻底防串号，但更慢，token 消耗约为导演模式 × 成员数。</p>
+                                <div className="text-xs font-bold text-slate-700">轮询模式（推荐）</div>
+                                <p className="text-[9px] text-slate-400 mt-1 leading-tight">按顺序每人单独调用一次，各用各的模型（下面可逐个配置），不会串号。没话说可以沉默。比导演模式慢，token 约为成员数倍。</p>
+                            </div>
+                            <div
+                                onClick={() => { setTempReplyMode('director'); trackEvent('切换群聊回复生成模式', { mode: 'director' }); }}
+                                className={`p-3 rounded-xl border cursor-pointer transition-all ${tempReplyMode === 'director' ? 'border-violet-400 bg-violet-50 ring-1 ring-violet-400' : 'border-slate-200 bg-white hover:border-slate-300'}`}
+                            >
+                                <div className="text-xs font-bold text-slate-700">导演模式</div>
+                                <p className="text-[9px] text-slate-400 mt-1 leading-tight">一次 API 调用生成整轮群聊，所有人都用设置里的同一个模型。快、省 token，但角色偶尔可能串号，也无法逐人换模型。</p>
                             </div>
                         </div>
+                    </div>
+
+                    {/* Member Models */}
+                    <div className="pt-2 border-t border-slate-100">
+                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block">成员模型</label>
+                        <MemberModelList
+                            members={activeGroup
+                                ? activeGroup.members.map(id => characters.find(c => c.id === id)).filter((c): c is CharacterProfile => !!c)
+                                : []}
+                        />
                     </div>
 
                     {/* Bubble Appearance */}

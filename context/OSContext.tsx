@@ -3174,6 +3174,8 @@ export const OSProvider: React.FC<{ children: React.ReactNode }> = ({ children }
           name,
           members,
           avatar: generateAvatar(name),
+          // 新建默认轮询：每位成员各自调用自己的模型，按顺序回应
+          replyMode: 'roundRobin',
           createdAt: Date.now()
       };
       await DB.saveGroup(newGroup);
