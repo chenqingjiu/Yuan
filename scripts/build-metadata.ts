@@ -35,5 +35,21 @@ export function pageBuildMetadataPlugin(metadata: PageBuildMetadata): Plugin {
         injectTo: 'head-prepend',
       }],
     },
+    // 「检查更新」读站点根目录的 version.json（见 utils/checkUpdate.ts）。
+    // label 直接复用与 BUILD_LABEL 相同的 branch@commit，保证「当前构建标签」与
+    // 「线上版本标签」同源，否则两端格式不一致会永远误报有新版本。
+    generateBundle() {
+      const label = `${metadata.branch}@${metadata.commit}`;
+      this.emitFile({
+        type: 'asset',
+        fileName: 'version.json',
+        source: JSON.stringify({
+          branch: metadata.branch,
+          commit: metadata.commit,
+          label,
+          time: metadata.time,
+        }, null, 2) + '\n',
+      });
+    },
   };
 }
