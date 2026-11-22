@@ -108,7 +108,8 @@ export async function generatePersonaScript(opts: {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiConfig.apiKey}` },
         body: JSON.stringify({ model: apiConfig.model, messages: (await ContextBuilder.buildCharacterRequest(characterContextInput, [{ role: 'user', content: prompt }])), temperature: 0.98, max_tokens: 24000 }),
-    });
+        __sullyMeta: { appId: 'personasim', appName: '人格模拟', charId: char.id, charName: char.name, purpose: '生成人格模拟剧本' },
+    } as RequestInit);
     if (!res.ok) throw new Error('API');
     const data = await safeResponseJson(res);
     // 截断直接报错，不兜底：模型输出被 token 上限截断时 finish_reason 为 'length'
@@ -237,11 +238,11 @@ const PersonaSim: React.FC<Props> = ({ targetChar, onExit, openLifeLog, sim, onS
         // 关键：基于「最新」角色状态合并，绝不用可能过期的 targetChar 快照整体覆盖 phoneState
         //（否则在异步间隙里别处的写入会把刚存的 simLogs / 其它 phoneState 字段抹掉）。
         let dispatchBuffs: CharacterBuff[] | null = null;
-        updateCharacter(targetChar.id, (cur): Partial<CharacterProfile> => {
+        updateCharacter(targetChar.id, (cur) => {
             const currentLog = cur.phoneState?.simLogs?.find(log => log.id === logId);
             if (!currentLog) return {}; // 已删除的记录不因播放自动复活。
             const applyBuff = !!newBuff && !hasCompletedPersonaSim(currentLog);
-            const phoneState: NonNullable<CharacterProfile['phoneState']> = {
+            const phoneState = {
                 ...cur.phoneState,
                 records: cur.phoneState?.records || [],
                 simLogs: (cur.phoneState?.simLogs || []).map(log => log.id === logId ? {

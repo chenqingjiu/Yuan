@@ -139,6 +139,28 @@ sullyos.devDebug.log.v1.<branch>        ← 分类捕获日志（各类混存，
 | 捕获类 `lifecycle` | 捕获 | 抓页面前后台/焦点/网络状态变化：`visibilitychange`、`focus`/`blur`、`pagehide`/`pageshow`（含 bfcache `persisted` 标记）、`online`/`offline`、`freeze`/`resume`（Chromium 系）。跟 api 类对时间线用——API 报错前后紧挨着 `visibilitychange → hidden`，基本就是切后台/锁屏把 fetch 冻死的 | 同上，取消勾选不清日志 |
 | `exposeLogDetail`<br>（记录完整内容） | 抓取 | 关（默认）：`messages` 聊天历史数组整组换成一句 `…共 N 项（已折叠）`；开：整段存 | 影响**抓取 / 存储**；要完整须复现前打开，已抓的折叠版不可还原 |
 
+### 一次性工具：OPFS 探针
+
+面板里的「OPFS 探针」按钮在真机上核对 OPFS 的建文件、写入、读回校验、配额和删除，结果是一段可复制的 JSON，带 UA、协议和页面是否被 Service Worker 接管。实现在 `utils/opfsProbe.ts`，用途见 [`backup-pipeline.md`](./backup-pipeline.md) 第零期。结果里的 `appendWrites` 是往同一个文件连续追加写 16 次、每次 1MB，记下文件实际大小（`fileSize`）和浏览器报的用量涨了多少（`usageGrowth`）。做两遍：`exact` 每次传一块刚好 1MB 的独立缓冲，`view` 每次传一块 4MB 缓冲上的 1MB 视图。用量涨 16MB 左右是正常记账，远超这个数说明浏览器每写一次都把整个文件重新算了一遍；`view` 的文件大小不是 16MB，说明浏览器把视图背后的整块缓冲都写了进去。
+
+「追加写压力测试」往同一个 OPFS 文件连续追加写 1MB，写满 2048 次（2GB）或写入被拒绝为止，然后删掉，实现是 `runOpfsAppendStress`。它回答的问题是：浏览器报的用量随写入次数成平方增长，账面远超配额、磁盘实际还空着的时候，写入会不会被拒绝。结果里每 128 次有一组用量和配额，被拒绝时带上是第几次和报错原文。
+
+「选文件测读取速度」从系统文件选择器选一个文件（选备份包本身最有代表性），读文件末尾、在 8 个位置由前到后再由后到前各读 1MB、再顺序读开头 32MB，记下每次的耗时，实现是 `measureFileReads`。耗时和位置无关，说明文件能直接跳到任意位置读；越靠后越慢，说明每次读都要从文件开头跳过去，这类文件上按需读包会很慢。它不读文件名，也不保留读到的内容。
+
+「塞 100 万条测试关联」往当前用户空间的记忆关联表里追加测试行（再点一次会继续累加），用来在真机上复现「关联表很大时导出备份」。测试行的编号统一以 `ml_seed_` 开头，「清掉测试关联」按这个前缀删，不碰真实关联。实现在 `utils/devSeedMemoryLinks.ts`。测试行指向不存在的记忆节点，不会被召回用到，但会计入存储占用和备份体积，测完要清掉。
+
+「上次多用户导出的统计」显示最近一次多空间导出写到了磁盘还是内存（`onDisk`）、文件大小、耗时、压缩包条目数，以及耗时较长的各张表的页数、行数和用时，页面刷新后清空。
+
+「上次多用户恢复的统计」显示最近一次多空间恢复各阶段的耗时（整体检查、图片核对与写入、收尾），耗时较长的各张表在清空、读包、解包、写库上各用了多久，以及挂起后重写的次数。恢复成功后页面会刷新，所以这份统计放在 `sessionStorage` 里，关掉标签页或 App 后清空；失败的恢复也会留下一份，带错误名称和信息。
+
+要顺便核对 WebKit 319985（落盘的文件上传时发出 0 字节），有两种上传方式：
+
+- **「探针 + 传到已配置的 WebDAV」**：配了 WebDAV 云备份时才出现。走云备份自己的上传通道，把 OPFS 文件按原文件、整段 `slice`、部分 `slice` 三种请求体各传一次，传完删除。上传自带远端大小核对，哪一种发出去是 0 字节，结果里会直接写明云端收到的字节数。
+- **填上传地址**：往这个地址 PUT 同样三种请求体，再用 HEAD 读远端大小。地址要允许匿名写入和跨域。
+
+不用 Service Worker 回显：请求体被 SW 接走之后，就不再经过出问题的那条上传路径，测出来全是正常值。
+
+
 捕获日志：各类**混存在一个数组**里、每条带 `category`，全局最多留 **100 条 / 1 MB**（先到先淘汰）。因为长文本在写入时就折叠了（见第九节），实际存的是瘦身版、很省空间，1 MB 基本撑不爆、轻松存满 100 条；导出（复制 / 下载）默认导全部、自动带上当前分支 + commit，并对密钥字段脱敏。
 
 ---
@@ -253,7 +275,7 @@ appendDevDebugMcpLog({ tool, args, result });   // 没勾 mcp 时是空操作，
 `appendDevDebugLog` 自带的保护，调用方都不用操心：
 
 - **门禁**：对应 category 没勾就直接 return，零成本。
-- **脱敏**：`data` 里 key 名命中 `api_key / authorization / bearer / token / secret / endpoint / p256dh / auth` 的字段，值替换成 `<redacted>`（正则见 `SECRET_KEY_PATTERN`）。
+- **脱敏**：`data` 里 key 名命中 `api_key / authorization / bearer / token / secret / endpoint / p256dh / auth / password / cookie / device_key / spt` 等敏感字段时值替换成 `<redacted>`（正则见 `SECRET_KEY_PATTERN`）；HTTP 日志的 `url` 与任意字符串值、`label` 中嵌着的中转路径令牌、敏感查询参数、第三方推送链接与内联凭据也会一并替换为 `<redacted>`。
 - **折叠**：默认把 `data` 里超 10 字的长文本截成「前 10 字 + `...`」再落库（省空间 / 隐私）——所以你新加的捕获类导出默认也是瘦身版，要原文得复现前开「记录完整内容」，详见第九节。
 - **容量**：全局最多最近 100 条、超 1 MB 从头丢，不会撑爆 localStorage。
 - **永不抛**：内部整个包了 try/catch，日志失败不影响主流程。
@@ -405,39 +427,33 @@ SW 跑在自己的 context，没法直接访问 page 的 `localStorage` / `appen
 
 ### 现在记什么
 
-`utils/networkFailureDiagnosis.ts` 负责把能补的旁证一次性补齐，`context/OSContext.tsx` 的 fetch 拦截器
-在 `catch` 里调用它：
+记忆宫殿的「缓冲区提取失败」由提取调用点标注。自检卡和导出的同一条日志显示批次、失败阶段、API 域名、匹配的预设名及请求模型。收到响应头后保留实际 HTTP 状态，读完正文后才进入解析阶段。诊断信息随单次请求传递，覆盖 OpenAI 兼容、Anthropic 原生与自动流式转换。正文、认证头和 URL 查询参数不进入这张卡。
 
-```
-URL: https://proxy.friedsully.com/api/health
-请求: GET · 失败于 43ms
-错误: TypeError: Failed to fetch
-目标域名: proxy.friedsully.com（跨域请求，受 CORS 约束）
-本页来源: https://xxx.pages.dev
-浏览器联网状态: 在线
-Resource Timing: responseStatus=429, transferSize=0 → 对方其实回了 HTTP 429，是响应被 CORS 拦掉的，不是网络不通
-初判: 请求在拿到响应头之前就失败了——浏览器没告诉我们具体是哪一步断的。
-可能原因: 梯子/代理把这个域名的连接掐了 · DNS 解析不到 · ...
-连通性复检: no-cors 直连 proxy.friedsully.com 成功 → 网络路径是通的，问题出在响应本身（...）
-```
+日常展示的外链表情、图片和字体读取失败时沿用各自的占位图或备用字体。全局 fetch 拦截器对已识别的跨站图片、字体读取跳过系统报错和域名复检，原响应或异常仍交给调用方。表情原图缓存、分享卡预览、装扮封面取图和微博配图下载通过 `__sullyHandlesFailure` 处理无扩展名图床及图片代理。手动排查、导出或分享的结果在各自操作界面显示。
 
-两个关键设计：
+`utils/networkRequestSource.ts` 负责识别请求所属的具体业务子系统并对 URL 脱敏，`utils/networkFailureDiagnosis.ts` 负责把连接层与流式阶段的旁证补齐，`context/OSContext.tsx` 的全局拦截器统一组装为 `SystemLog`：
 
-1. **Resource Timing 的 `responseStatus`**：跨域也能读（不受 TAO 限制）。它 > 0 就说明**对方其实回了**，
-   那就是 CORS / 限流页的事，跟网络通不通无关——这一条直接把排查范围砍一半。
-2. **no-cors 连通性复检**：`mode: 'no-cors'` 不做 CORS 校验，只要网络路径通就会拿到 opaque 响应。
-   它成功而原请求失败 ⇒ 响应头的问题；它也失败 ⇒ 这台设备到这个域名是真的不通。结论异步回填到同一条日志。
+- **业务模块来源（`source`、`context.category` 与自检提示）**：按协议头、接口路径和本机已配置的服务端点（仅比对域名/路径前缀，不读密钥）区分对话模型（OpenAI `/chat/completions`、`/responses`、Anthropic `/messages`、`/models`）、记忆宫殿（Embedding / Rerank / Supabase 向量库）、主动消息 2.0（直连 Worker 或经大陆中转 `amsg-relay`）、主代理 Worker 各子路由（网易云 `/netease/*`、微博 `/weibo`、WebDAV `/webdav`、GitHub `/github`、点单 MCP、Notion、飞书、小红书、Replicate、网页抓取等）、语音 TTS/STT（MiniMax / ElevenLabs / Fish Audio）、通用 MCP（直连或 `?target=` 代理）、彼方邮局与合写诗、装扮服务及本机静态资源。旁路服务附带 `影响范围` 提示，标明该报错是否与主对话或主动消息推送无关。
+- **归属隔离（`explicit` vs `ambient`）**：调用点通过 `__sullyMeta` 显式传入归属时记为 `调用归属（调用点显式标记）`；未传显式归属的裸 `fetch` 只记 `当时前台状态（未显式传归属，可能是后台自动任务）`，防止后台记忆或同步报错串标到当前打开的聊天角色。
+- **前后台切换线索（`backgroundedDuringRequest`）**：拦截器记录请求在飞期间页面是否触发过 `visibilityState === 'hidden'`。移动端浏览器（尤其 iOS Safari / PWA）在切后台或锁屏时会挂起、切断进行中的连接，切回前台后才抛出 `Load failed`；日志据此优先提示保持前台重试。
+- **响应头到达后的流式中断（`stream-interrupted`）**：无论是透明流式升级拼包，还是私聊/见面的原生 `stream: true` 读取，只要已收到 HTTP 响应头后在正文读取途中报错，均归入 `stream-interrupted`，明确区分于连接建立前/CORS 阶段的 `blocked`，且不再额外发起 `no-cors` 根路径探测。
+- **URL 与文本凭据脱敏（`sanitizeUrlForLog` / `redactRelayTokensInText`）**：入库前将主动消息 2.0 大陆中转路径中的个人令牌（`/t/<令牌>/<worker域名>/...` → `/t/<redacted>/<worker域名>/...`）、路径首段含密钥的第三方推送域名（`api.day.app` / `api.chuckfang.com`）、敏感查询参数（`key`/`token`/`secret`/`appid`/`xsec_token`/`lat`/`lon` 等）、`user:pass@` 口令以及 `?url=` / `?target=` 内嵌地址中的敏感参数统一替换为 `<redacted>`，保留目标域名与接口路径；报错原文、HTTP 响应回显与 `console.error` 日志中夹带的敏感 URL 与内联凭据（`Bearer`、`MUSIC_U`、`SPT_`、`bark:/meow:/wxpusher:`）也会同步打码。
+- **结构化上下文字段（`context` 与 `time`）**：每条日志带本地时区可读时间 `time`、构建版本 `context.build` 及结构化诊断字段，复制日志后无需再追问版本号。
 
-### 失败分类别漏了 TimeoutError
+两个关键探针：
 
-线上第一版就踩到：`AbortSignal.timeout()` 抛出来的是 **`TimeoutError` / "signal timed out"**，
-既不含 `abort` 字样、也不是 `TypeError`，一度掉进 `unknown`，日志只剩一句「不符合已知的几种
-失败形态」。分类里 `timeout` 必须排在 `aborted` 前面判：
+1. **Resource Timing 的 `responseStatus`**：拿到 `Timing-Allow-Origin` 授权时可读状态码。它 > 0 说明对方已返回响应，问题在响应头/CORS 或限流页，不在网络连通性。
+2. **no-cors 连通性复检**：`mode: 'no-cors'` 不做 CORS 校验，只要网络路径通就会拿到 opaque 响应。结论异步回填到同一条日志的 `detail` 与 `context.reachability`。
 
-- `aborted`（AbortError）= 调用方自己撤了，到此为止，不用再查；
-- `timeout`（TimeoutError）= 连接**挂住不返回**，恰恰是最需要继续查的一类，要做连通性复检。
+### 失败分类与复检边界
 
-要不要复检统一走 `shouldProbeReachability(kind)`，别在调用点各写各的。
+`AbortSignal.timeout()` 抛出的是 **`TimeoutError` / "signal timed out"**，分类时与主动取消区分：
+
+- `aborted`（AbortError）= 调用方主动取消，不做复检，也不触发终端顶部的网络自查折叠卡；
+- `stream-interrupted` = 响应头已到达、正文流中途断开，域名与 CORS 均已验证通过，不做复检；
+- `timeout` / `blocked` / `unknown` = 需要继续排查连通性，统一由 `shouldProbeReachability(kind)` 放行复检。
+
+终端顶部的「网络连接失败？按这个顺序自查」折叠卡片统一走 `shouldShowNetworkSelfCheck(systemLogs)` 判断，不依赖硬编码的 `source` 字符串。
 
 ### 「失败得多快」也是证据
 

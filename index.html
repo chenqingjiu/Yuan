@@ -46,6 +46,7 @@
               surface: 'rgba(255, 255, 255, 0.75)',
               'surface-glass': 'rgba(255, 255, 255, 0.35)',
             },
+            opacity: Object.fromEntries(Array.from({ length: 101 }, (_, i) => [i, (i / 100).toString()])),
             animation: {
               'fade-in': 'fadeIn 0.35s cubic-bezier(0.4, 0, 0.2, 1)',
               'slide-up': 'slideUp 0.35s cubic-bezier(0.25, 1, 0.5, 1)',
@@ -123,24 +124,6 @@
       }
     </script>
     <style>
-      /* ── 来信 · 手写钢笔字（子集化产物，见 scripts/subset-font.py）──
-         清松手写体5 打底（真手写感）+ 霞鹜文楷兜底（缺字回退，同为楷系、气质接近）。
-         两者均为 SIL OFL 1.1，可商用、可嵌入。font-display: swap 保证字体没到位也不白屏，
-         拆信动画那几百毫秒正好当加载窗口。 */
-      @font-face {
-        font-family: 'JasonHandwriting5';
-        src: url('./fonts/JasonHandwriting5-subset.woff2') format('woff2');
-        font-weight: 400;
-        font-style: normal;
-        font-display: swap;
-      }
-      @font-face {
-        font-family: 'LXGW WenKai';
-        src: url('./fonts/LXGWWenKai-Regular-subset.woff2') format('woff2');
-        font-weight: 400;
-        font-style: normal;
-        font-display: swap;
-      }
       :root {
         --primary-hue: 245; 
         --primary-sat: 25%;
@@ -167,6 +150,8 @@
       }
       body {
         background-color: #0f1115;
+        color: #0f172a;
+        color-scheme: light;
         margin: 0;
         overflow: hidden;
         /* Critical: Prevent browser back/forward swipe navigation AND vertical rubber-banding */
@@ -190,11 +175,17 @@
       html.sully-statusbar-compact {
         --chrome-top: max(var(--safe-top), 1.5rem);
       }
+      /* 外壳本身可多画一段 home 安全区，但不能因此把根页面变成可拖动的滚动容器。 */
+      html.ios-standalone {
+        height: var(--app-visible-height, 100dvh);
+        min-height: 0;
+        overflow: hidden;
+        overscroll-behavior: none;
+      }
       body.ios-standalone {
         min-height: var(--app-height);
         height: var(--app-height);
-        overscroll-behavior-y: auto;
-        overscroll-behavior-x: none;
+        overscroll-behavior: none;
       }
       body.ios-standalone #root {
         min-height: var(--app-height);
@@ -270,6 +261,16 @@
          Match the visible header instead of extending the fallback pink gradient. */
       html[data-ios-status-bar-contained] .sully-phone-shell {
         background: var(--ios-status-bar-color, #0f1115);
+      }
+
+      /* The native keyboard can expose the document canvas beyond the resized chat.
+         Override PhoneShell's inline desktop wallpaper on both canvas backgrounds.
+         Blend translucent chat colors over an opaque base without resizing any content. */
+      html.sully-ios:has(.sully-chat-root .sully-chat-inputbar:focus-within, body.ios-keyboard-open .sully-chat-root .sully-chat-inputbar),
+      html.sully-ios:has(.sully-chat-root .sully-chat-inputbar:focus-within, body.ios-keyboard-open .sully-chat-root .sully-chat-inputbar) > body {
+        background: linear-gradient(var(--ios-inputbar-color, transparent), var(--ios-inputbar-color, transparent)),
+                    linear-gradient(var(--ios-chat-stage-color, transparent), var(--ios-chat-stage-color, transparent)),
+                    #e5e5ea !important;
       }
 
       body.ios-keyboard-open .sully-shell-content {

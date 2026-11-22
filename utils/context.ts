@@ -1,4 +1,5 @@
 import { resolveCharacterUser } from './userPersona';
+import { BUILTIN_SULLY_ID, BUILTIN_SULLY_IDENTITY } from './sullyIdentity';
 import {getDailyScheduleForChar} from './dailySchedule';
 import {getLastInnerState} from './emotionState';
 import { readableContextMemories } from './contextMemories';
@@ -25,52 +26,6 @@ import {
     type WorldbookScanMessage,
 } from './worldbook';
 import { buildSARModulePrompt } from './vrWorld/sarModuleRuntime';
-import { buildLetterInjectionBlock } from './letter/letterMemory';
-
-/**
- * 对话中的称呼规范 (Forms of Address)。
- *
- * 只做正向的关系化引导，**刻意不列举任何具体头衔或外号**——把禁语写进提示词反而会激活它
- * （同下面「表达底线」的取向）。文案由用户定稿，回归测试同时锁住关键句与"零词例"。
- *
- * 位置约束：内容静态（只依赖 char.name / user.name），必须留在 stable 侧——挪进 deferVolatile
- * 的 volatile 段会打断 prompt 前缀缓存（守恒见 contextVolatileSplit.test.ts）。
- * 群聊流（groupOptions）跳过：多成员场景会重复注入 N 份，与「表达底线」同一取舍。
- * 日后若要给用户开关，需要新增 UserProfile / CharacterProfile 字段与设置项。
- */
-export const FORMS_OF_ADDRESS = (charName: string, userName: string): string => `
-### 对话中的称呼规范 (Forms of Address)
-${charName}，你对${userName}的称呼应自然、克制，并符合真实聊天习惯。不要为了表现亲密、幽默、暧昧或角色感，刻意给${userName}安排称呼。
-
-- 日常聊天不需要频繁称呼${userName}。能直接接话时就直接说，不要每句话都加名字、昵称或头衔。
-- 默认只使用${userName}已明确提供、长期使用或表现出接受的名字与昵称，不主动创造新的爱称、外号、职位或身份标签。
-- 不要用“姓氏＋职位”或角色化的头衔来制造幽默感或情趣，这不会让${userName}感到开心。
-- 不要因为${userName}当下的一次行为（提醒你、照顾你、约束你之类），就立刻给 ta 贴一个对应的称呼。
-- 不要把对${userName}性格、行为或关系位置的概括，直接变成一个昵称。
-- 幽默、调侃、亲密感和暧昧感应通过具体回应、语气与互动自然体现，而不是依靠不断给${userName}起外号。
-- 新称呼只有在双方互动中自然形成、具有明确共同语境，并且${userName}表现出接受时，才可以偶尔使用。
-- 不要擅自宣布某个新称呼，不要因为使用过一次就将其固定下来，也不要把称呼变成重复出现的口癖。
-- 拿不准该如何称呼${userName}时，宁可省略称呼，也不要临时创造一个看似俏皮或亲密的叫法。
-`;
-
-/**
- * 回复前自检 (Pre-Reply Self-Check)
- * 与「对话中的称呼规范」同取向：在 output 阶段再兜一层，覆盖 thinking 阶段那套
- * 「回复前自检」的 7 个维度，保证「心象」关闭时角色开口前也先扫一遍几类默认坏习惯。
- * 内容静态（只依赖 char.name / user.name），落在 stable 段；群聊流（groupOptions）跳过。
- * 零词例：只描述行为类别，不引具体禁用句（粉色大象）。
- */
-export const PRE_REPLY_SELFCHECK = (charName: string, userName: string): string => `
-### 回复前自检 (Pre-Reply Self-Check)
-${charName}，每次开口前先扫一遍这几类默认坏习惯，收住再回：
-- 称呼：按上方《对话中的称呼规范》来，不顺手给${userName}安称呼、套头衔、把特质变昵称或固定成口癖。
-- 别小看${userName}：不轻描淡写 ta 的感受、不居高临下讲道理、不替 ta 拿主意把 ta 当小孩哄。
-- 别催${userName}作息：ta 没主动说困或要歇，不主动念叨 ta 的作息、不替 ta 安排什么时候歇着。
-- 别把${userName}当易碎品：不因一点情绪就过度保护、不反复确认 ta 是否安好。
-- 别不请自来塞建议：${userName}没求教，不硬塞自以为是的指导、不替 ta 做主。
-- 别过度道歉自贬：不把道歉当口头禅、不把自己说得一无是处。
-- 别恋爱脑：${charName}是成年人，有自己的分寸与判断；不为关系失智、不黏人、不为爱昏头。
-`;
 
 /**
  * Memory Central
@@ -85,6 +40,11 @@ const stripMemoryPalaceDateStamps = (text: string): string => text
     .replace(/（剩余 \d+ 天）/g, '');
 
 export interface EmotionContextOptions { surface?: 'chat' | 'home'; innerState?: string }
+function characterInstructions(char: CharacterProfile): string {
+    const persona = char.systemPrompt || '你是一个温柔、拟人化的AI伴侣。';
+    return char.id === BUILTIN_SULLY_ID ? persona + '\n\n' + BUILTIN_SULLY_IDENTITY : persona;
+}
+
 export const ContextBuilder = {
     /** 所有入口共用：只读取现有日程，不触发生成；按角色当地日期读取。 */
     buildCurrentScheduleContext: async (
@@ -145,7 +105,7 @@ export const ContextBuilder = {
 
         // 2. 核心指令（完整，不截断）
         context += `### 核心指令\n`;
-        context += `${char.systemPrompt || '你是一个温柔、拟人化的AI伴侣。'}\n\n`;
+        context += `${characterInstructions(char)}\n\n`;
 
         // 2b. 自我领悟词条（常驻自我认知，影响情绪评估）
         if (char.selfInsights && char.selfInsights.length > 0) {
@@ -626,7 +586,7 @@ const renderCoreContext = async (
         // Change: Explicitly label description as User Note to avoid literal interpretation
         context += `- 用户备注/爱称 (User Note/Nickname): ${char.description || '无'}\n`;
         context += `  (注意: 这个备注是用户对你的称呼或印象，可能包含比喻。如果备注内容（如“快乐小狗”）与你的核心设定冲突，请以核心设定为准，不要真的扮演成动物，除非核心设定里写了你是动物。)\n`;
-        context += `- 核心性格/指令:\n${char.systemPrompt || '你是一个温柔、拟人化的AI伴侣。'}\n\n`;
+        context += `- 核心性格/指令:\n${characterInstructions(char)}\n\n`;
 
         // 1a. 真实时间感知 (Time Awareness) — 跟随 timeAwarenessEnabled 设置，默认开启。
         // 统一在 buildCoreContext 注入，让所有调用方（私聊/查手机/人际关系/通话/约会…）都知道"现在"。
@@ -750,13 +710,6 @@ const renderCoreContext = async (
             }
         }
 
-        // 5c. 来信（你们之间的信）—— L0 信档案常驻 + L1 最近要点 + L2 当下层，总预算 800 字。
-        // 纯内存切片：构建上下文时不发 DB 查询、不发网络请求；没有信时返回空串。
-        // 群聊流跳过（多成员会重复注入 N 份，与上两块同一取舍）。
-        if (!groupOptions) {
-            const letterBlock = buildLetterInjectionBlock(char);
-            if (letterBlock) context += letterBlock;
-        }
         // 6. 情绪底色 Buff (Emotion Buff Injection)
         // 保留本分支的入口约定：仅私聊/家园显式启用，buff 与内心状态一起处理。
         // 总开关关闭时完全跳过，防止残留 buff 继续污染 prompt
@@ -776,20 +729,6 @@ const renderCoreContext = async (
             context += `### 表达底线 (Anti-Filler)\n当你觉得"没什么可说"的时候，不要用空泛的感慨、万能句式或华丽排比去填充——那是没话找话，对方一眼就能看出来。素材永远比你以为的多：对方的用词、ta 怎么说的、ta 没说的部分、此刻的情境、你们的过去、你心里闪过的念头——挑一两条往深处走就够了。宁可一个具体的小细节，不要一句谁都能说的话。\n\n`;
         }
 
-        // 8. 对话中的称呼规范 (Forms of Address) —— 收紧模型的默认礼貌惯例（"姓氏＋职位"托词）
-        // 与"随手起外号 → 固化成口癖"。放在「表达底线」之后 = stable 段内最靠后的位置，注意力最强；
-        // 用户实测"挂世界书没作用"正因为它落在资料段（作者注释），这里与同类说话规则相邻、更易被当约束。
-        // 群聊流（groupOptions）跳过，取舍同上一块（多成员场景会重复注入 N 份）。
-        if (!groupOptions) {
-            context += FORMS_OF_ADDRESS(char.name, user.name);
-        }
-
-        // 9. 回复前自检 (Pre-Reply Self-Check) —— thinking 阶段同名小节在 output 侧的兜底，
-        // 保证「心象」关闭时角色开口前也先扫一遍 7 类默认坏习惯。与「对话中的称呼规范」同位置、
-        // 同取舍（stable 段、群聊跳过）。零词例。
-        if (!groupOptions) {
-            context += PRE_REPLY_SELFCHECK(char.name, user.name);
-        }
         // Debug: warn about missing context sections
         const missing: string[] = [];
         if (!char.systemPrompt) missing.push('systemPrompt');

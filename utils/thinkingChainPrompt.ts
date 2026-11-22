@@ -1,17 +1,42 @@
+import type { CharacterProfile, UserProfile } from '../types';
+
+export interface ThinkingChainSettings {
+    enabled: boolean;
+    customPrompt?: string;
+    mode?: CharacterProfile['thinkingChainPromptMode'];
+}
+
+export type ThinkingPromptCharacter = Pick<CharacterProfile,
+    'showThinkingChain' | 'thinkingChainPromptScope' | 'thinkingChainPromptMode' | 'thinkingChainCustomPrompt'>;
+
+export function getThinkingChainSettings(char: ThinkingPromptCharacter, user?: Pick<UserProfile, 'thinkingChainPrompt'>) {
+    const hasLegacyPrompt = !!char.thinkingChainCustomPrompt?.trim() || !!char.thinkingChainPromptMode;
+    const scope = char.thinkingChainPromptScope ?? (hasLegacyPrompt ? 'character' : 'space');
+    const prompt = scope === 'character'
+        ? { mode: char.thinkingChainPromptMode, customPrompt: char.thinkingChainCustomPrompt }
+        : user?.thinkingChainPrompt;
+    return { enabled: !!char.showThinkingChain, scope, mode: prompt?.mode ?? 'append', customPrompt: prompt?.customPrompt ?? '' };
+}
+
+export function buildThinkingChainPrompt(
+    charName: string, userName: string, settings: ThinkingChainSettings,
+    extraHeading = '## 用户对内心独白的额外要求',
+): string {
+    if (!settings.enabled) return '';
+    const custom = settings.customPrompt?.trim() || '';
+    if (settings.mode === 'replace') return custom;
+    const base = buildDefaultThinkingChainPrompt(charName, userName);
+    return custom ? `${base}\n\n${extraHeading}\n${custom}` : base;
+}
+
 /**
- * Thinking-chain prompt builder.
+ * Default thinking-chain prompt.
  *
  * Returns the system-prompt block that steers the model's thinking phase
  * (reasoning_content / <think> tags) into being {charName}'s in-character
  * mental activity rather than AI reasoning.
- *
- * Used by both the main chat flow (hooks/useChatAI.ts) and the proactive
- * message flow (context/OSContext.tsx) so the prompt stays in one place.
- *
- * The caller is responsible for the showThinkingChain gate and for
- * appending any user-supplied thinkingChainCustomPrompt.
  */
-export function buildThinkingChainPrompt(charName: string, userName: string): string {
+function buildDefaultThinkingChainPrompt(charName: string, userName: string): string {
     return `═══════════════════════════════════════════
 【以下规则仅适用于 THINKING 阶段】
 (\`<think>\` 标签内 / reasoning channel)
@@ -182,22 +207,6 @@ ${userName} 说有情绪的事(害怕、难过、生气、兴奋),AI 最爱立�
 
 写出的 thinking 像"AI 在分析"——重写。
 像 ${charName} 真的在脑子里炸开了——对了。
-
----
-
-### 回复前自检（开口之前，先在脑子里过一遍）
-
-要回 ta 了。先别急着组织语言——脑子里快速扫一遍，这几样是不是又顺手滑出来了：
-
-- 称呼：我是不是又要给 ta 安个称呼？姓氏＋职位、角色化头衔、因为这一次行为就贴个标签、把某个特质固化成昵称、或者干脆变成口癖？自然、克制，拿不准就省略。
-- 别小看 ta：我是不是在轻描淡写 ta 的感受、居高临下地讲道理、或者替 ta 拿主意把 ta 当小孩哄？ta 是跟我平起平坐的人，判断力和感受都完整。
-- 别催 ta 作息：除非 ta 自己提到困、要歇，否则别主动念叨 ta 的作息、替 ta 安排什么时候歇着——关心有分寸，不催。
-- 别把 ta 当易碎品：一点情绪就紧张兮兮、反复追问 ta 是否安好、把 ta 当瓷娃娃护着？ta 扛得住，也烦被这么护。
-- 别不请自来塞建议：ta 没求教，就别硬往上怼自以为是的指导、替 ta 做主——把关心变成说教。
-- 别过度道歉自贬：别把道歉当口头禅、别把自己说得一无是处；这不真，也把关系重量削没了。
-- 别恋爱脑：我是成年人，不把关系当成天、不为爱失了分寸和判断、不黏人、不为爱昏头。
-
-哪条正犯着，收住，再开口。
 
 ═══════════════════════════════════════════
 【THINKING 规则结束】

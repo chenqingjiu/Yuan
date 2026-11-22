@@ -18,7 +18,7 @@ export function messageLogText(m: Message, stickerName?: (url: string) => string
             ? `[视频：${desc}]（截断片段）`
             : `[视频：${desc}]`;
     }
-    if (m.type === 'emoji') return `[表情包: ${stickerName ? stickerName(rawText.trim()) : '表情'}]`;
+    if (m.type === 'emoji') return `[表情包: ${m.metadata?.stickerName || (stickerName ? stickerName(rawText.trim()) : '表情')}]`;
     // 卡片消息的 content 只有标题，正文在 metadata 里。时间线只取一行摘要（会被
     // LINE_MAX_CHARS 再截一次），全文交给 buildGroupHistoryBlock 展开，那里才有完整正文。
     if (m.type === 'xhs_card') {

@@ -15,7 +15,8 @@ import { getApiCallAmbientContext, recordApiCall, type ApiCallMeta } from './api
 import { resolveBlobRefsInRequestBody } from './apiBlobRefs';
 import { waitForPalaceRequest } from './memoryPalace/maintenanceMode';
 import { fetchLlm } from './anthropicApi';
-import { isAnthropicEndpoint } from './llmEndpoint';
+import { isAnthropicEndpoint, readLlmResponseText, type LlmRequestInit, type LlmResponseInfo } from './llmEndpoint';
+import { normalizeAssistantCompletion, readAssistantMessage, splitInlineThinking } from './assistantThinking';
 
 const log = makeDebugLogger('api', 'SafeAPI');
 
@@ -24,8 +25,8 @@ export function isChatCompletionUrl(url: string): boolean {
 }
 
 /** Parse a fetch Response as JSON safely (text-first, then JSON.parse) */
-export async function safeResponseJson(response: Response): Promise<any> {
-    const text = await response.text();
+export async function safeResponseJson(response: Response, info?: LlmResponseInfo): Promise<any> {
+    const text = await readLlmResponseText(response, info);
     return parseRawBodyText(text, response.status, response.headers.get('content-type'));
 }
 
@@ -76,7 +77,7 @@ function parseRawBodyText(text: string, status: number, contentType?: string | n
     }
 
     try {
-        return JSON.parse(text);
+        return normalizeAssistantCompletion(JSON.parse(text));
     } catch (e) {
         // Show a snippet of what we got for debugging
         const preview = text.slice(0, 200);
@@ -164,27 +165,11 @@ class SseAssembler {
             if (Array.isArray(choice.delta.anthropic_content)) this.anthropicContent = choice.delta.anthropic_content;
             if (Array.isArray(choice.delta.anthropic_thinking)) this.anthropicThinking = choice.delta.anthropic_thinking;
             for (const k of Object.keys(choice.delta)) this.deltaKeys.add(k);
-            if (typeof choice.delta.content === 'string') {
-                delta = choice.delta.content;
-                this.content += delta;
-            }
-            // Anthropic 透传形态: delta.content 是分块数组 [{type:'text',text}|{type:'thinking',thinking}]
-            else if (Array.isArray(choice.delta.content)) {
-                for (const block of choice.delta.content) {
-                    if (block?.type === 'text' && typeof block.text === 'string') {
-                        delta += block.text;
-                        this.content += block.text;
-                    } else if (block?.type === 'thinking' && typeof block.thinking === 'string') {
-                        this.reasoning += block.thinking;
-                        reasoningDelta += block.thinking;
-                    }
-                }
-            }
-            const dr = choice.delta.reasoning_content ?? choice.delta.reasoning ?? choice.delta.thinking;
-            if (typeof dr === 'string') {
-                this.reasoning += dr;
-                reasoningDelta += dr;
-            }
+            const parts = readAssistantMessage(choice.delta);
+            delta = parts.content;
+            reasoningDelta = parts.reasoning;
+            this.content += delta;
+            this.reasoning += reasoningDelta;
             if (choice.delta.role) this.role = choice.delta.role;
             if (Array.isArray(choice.delta.tool_calls)) {
                 for (const frag of choice.delta.tool_calls) {
@@ -199,15 +184,11 @@ class SseAssembler {
         }
         // message 路径（一次性 SSE，不常见但兼容）
         else if (choice.message) {
-            if (typeof choice.message.content === 'string') {
-                delta = choice.message.content;
-                this.content += delta;
-            }
-            const mr = choice.message.reasoning_content ?? choice.message.reasoning ?? choice.message.thinking;
-            if (typeof mr === 'string') {
-                this.reasoning += mr;
-                reasoningDelta += mr;
-            }
+            const parts = readAssistantMessage(choice.message);
+            delta = parts.content;
+            reasoningDelta = parts.reasoning;
+            this.content += delta;
+            this.reasoning += reasoningDelta;
             if (choice.message.role) this.role = choice.message.role;
             if (Array.isArray(choice.message.tool_calls)) this.toolCalls.push(...choice.message.tool_calls);
         }
@@ -430,7 +411,7 @@ export function formatApiErrorPayload(data: any, status: number): string {
  */
 export async function safeFetchJson(
     url: string,
-    options: RequestInit,
+    options: LlmRequestInit,
     maxRetries: number = 2,
     timeoutMs: number = 0,
     /** 可选：补充「哪个 App / 哪个角色 / 用途」到 API 调用记录（设置 → API 调用记录）。 */
@@ -497,7 +478,7 @@ export async function safeFetchJson(
                     continue;
                 }
                 // Non-retryable or last attempt: parse body for error details
-                const data = await safeResponseJson(response);
+                const data = await safeResponseJson(response, options.__sullyResponseInfo);
                 // If we somehow got valid JSON with error info, wrap it
                 const errMsg = formatApiErrorPayload(data, response.status);
                 throw new Error(`API Error ${response.status}: ${errMsg}`);
@@ -506,7 +487,7 @@ export async function safeFetchJson(
             const timing: { firstDeltaMs?: number } = {};
             const data = streamHooks
                 ? await readBodyWithStreaming(response, streamHooks, timing, attemptStartedAt)
-                : await safeResponseJson(response);
+                : await safeResponseJson(response, options.__sullyResponseInfo);
             if (isChatCompletionUrl(urlStr)) {
                 // TTFT 拆分埋点：headers = 首包响应头到达（≈排队+prefill 起点），
                 // firstDelta = 第一段正文增量（≈真正的 TTFT，仅流式路径有），
@@ -581,35 +562,12 @@ export async function safeFetchJson(
  * Safely extract the AI content string from an OpenAI-compatible response.
  * Returns '' instead of crashing when the structure is unexpected.
  *
- * Handles thinking models (DeepSeek-R1, GLM-4.5, QwQ, Qwen3, ...):
- *  - Falls back to `reasoning_content` when `content` is missing/empty
- *  - Strips hidden <think>...</think> chain-of-thought blocks
+ * Excludes labelled reasoning and inline thinking blocks. A reasoning-only
+ * response is an empty answer, never a substitute for user-visible content.
  */
 export function extractContent(data: any): string {
     const msg = data?.choices?.[0]?.message;
-    const contentToText = (value: unknown): string => {
-        if (typeof value === 'string') return value;
-        if (Array.isArray(value)) {
-            return value.map(part => {
-                if (typeof part === 'string') return part;
-                if (!part || typeof part !== 'object') return '';
-                const record = part as Record<string, unknown>;
-                return contentToText(record.text ?? record.content ?? record.value);
-            }).filter(Boolean).join('');
-        }
-        if (value && typeof value === 'object') {
-            const record = value as Record<string, unknown>;
-            return contentToText(record.text ?? record.content ?? record.value);
-        }
-        return '';
-    };
-
-    let text = contentToText(msg?.content);
-    if (!text.trim()) text = contentToText(msg?.reasoning_content);
-    // Strip hidden chain-of-thought blocks: <think> / <thinking> / <thought>
-    text = text.replace(/<(think|thinking|thought)>[\s\S]*?<\/\1>/gi, '');
-    text = text.replace(/<(?:think|thinking|thought)>[\s\S]*$/gi, '');
-    return text.trim();
+    return splitInlineThinking(readAssistantMessage(msg).content).content.trim();
 }
 
 /**

@@ -178,6 +178,10 @@ const setViewportVars = () => {
     }
 
     document.documentElement.style.setProperty('--app-height', `${fullAppHeight}px`);
+    // 根页面只占可见高度；body 的额外 home 安全区仍可供外壳绘制，但不得撑出根滚动条。
+    // 使用经过脏值保护的高度，不能把动画期 visualViewport 的 80px 直接拿来裁根页面。
+    const visibleAppHeight = shouldStabilizeHeight && !keyboardOpen ? fullAppHeight - bottomSafeInset : fullAppHeight;
+    document.documentElement.style.setProperty('--app-visible-height', `${visibleAppHeight}px`);
     document.documentElement.style.setProperty('--visual-viewport-height', `${viewportHeight}px`);
     document.documentElement.style.setProperty('--keyboard-inset', `${keyboardInset}px`);
     document.documentElement.style.setProperty('--standalone-safe-area-bottom', `${bottomSafeInset}px`);
@@ -192,7 +196,9 @@ export const installIOSStandaloneWorkaround = () => {
     const useStandaloneFixes = isIOSStandaloneWebApp();
     // iOS 全屏 PWA 与安卓浏览器都需要这套键盘避让：可视区一变矮就挂 keyboard 类 + 锁外层滚动。
     // 安卓 Chrome/Edge 弹键盘时会把整页顶起，同样靠这套压回去。
-    const useKeyboardFixes = isIOSDevice() || isAndroidDevice();
+    const ios = isIOSDevice();
+    const useKeyboardFixes = ios || isAndroidDevice();
+    document.documentElement.classList.toggle('sully-ios', ios);
     keyboardFixesEnabled = useKeyboardFixes;
     if (useStandaloneFixes) {
         document.documentElement.classList.add('ios-standalone');
@@ -214,6 +220,14 @@ export const installIOSStandaloneWorkaround = () => {
     // 要等 visualViewport 真的变矮，setViewportVars 才会挂上标记、同时把高度收到键盘上方。
     const handleFocusIn = (event: FocusEvent) => {
         if (!isTextEntryElement(event.target)) return;
+        // WebKit can sample the page behind the native accessory bar before the viewport resizes.
+        const bar = ios && event.target.closest('.sully-chat-inputbar');
+        const stage = bar && bar.closest('.sully-chat-root');
+        if (bar && stage) {
+            const root = document.documentElement.style;
+            root.setProperty('--ios-inputbar-color', window.getComputedStyle(bar).backgroundColor || 'transparent');
+            root.setProperty('--ios-chat-stage-color', window.getComputedStyle(stage).backgroundColor || 'transparent');
+        }
         setViewportVars();
 
         const target = event.target;

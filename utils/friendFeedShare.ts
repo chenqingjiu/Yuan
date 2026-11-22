@@ -17,7 +17,8 @@ async function downloadShareImage(url:string,proxy:string):Promise<Blob> {
     const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),8000);
     try{
         const response=await fetch(proxy.replace(/\/+$/,'')+'/weibo-image?url='+encodeURIComponent(url),{
-            credentials:'omit',cache:'no-store',redirect:'error',referrerPolicy:'no-referrer',signal:controller.signal});
+            credentials:'omit',cache:'no-store',redirect:'error',referrerPolicy:'no-referrer',signal:controller.signal,
+            __sullyHandlesFailure:true} as RequestInit);
         const mime=(response.headers.get('content-type')||'').split(';')[0];
         if(!response.ok||!['image/jpeg','image/png','image/webp','image/gif','image/avif'].includes(mime))throw Error('配图无法读取');
         const reader=response.body?.getReader();if(!reader)throw Error('配图为空');
@@ -68,7 +69,7 @@ export async function shareFriendPost(postId:string,charId:string,deliveryId:str
     const characters=await DB.getAllCharacters();
     const projected=projectFriendPost(latest,charId,current);
     const share:FriendFeedShareSnapshot={version:1,postId,authorId:projected.authorId,authorName:current.authorName,text:current.text,
-        identity:friendKnownIdentity(latest,charId,current,characters),
+        identity:friendKnownIdentity(latest,charId,current,characters),accountBio:projected.accountBio,
         ...(current.source?{source:structuredClone(current.source)}:{}),synced:current.synced,sharedAt:Date.now(),
         ...(current.images ? {images:structuredClone(current.images)} : {}),
         ...(current.imageCards?.length?{imageCards:structuredClone(current.imageCards)}:{}),

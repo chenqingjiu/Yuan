@@ -8,7 +8,7 @@ import { openDB } from '../db';
 import type {
     MemoryNode, MemoryVector, MemoryLink, MemoryBatch,
     TopicBox, Anticipation, MemoryRoom, BoxStatus, AnticipationStatus,
-    EventBox, RoomPlate, PlateRoom, DigestReport,
+    EventBox, RoomPlate, PlateRoom, DigestReport, RemoteVectorConfig,
 } from './types';
 import { DIGEST_REPORT_KEEP, EVENT_BOX_SEAL_THRESHOLD } from './types';
 import { bm25Index } from './bm25Index';
@@ -197,6 +197,41 @@ export const MemoryNodeDB = {
         for (const charId of new Set(nodes.map(node => node.charId))) notifyMemoryNodesChanged(charId);
     },
 
+    /** 批量将已向量化节点的最新元数据（如手动修改后的日期、房间、标签）同步到远端 Supabase */
+    syncRemoteMetadataMany: (nodes: MemoryNode[], remoteConfigOverride?: RemoteVectorConfig): void => {
+        const embeddedNodes = nodes.filter(n => n.embedded);
+        if (embeddedNodes.length === 0) return;
+        const rc = (remoteConfigOverride?.enabled && remoteConfigOverride.initialized)
+            ? remoteConfigOverride
+            : getRemoteVectorConfig();
+        if (!rc) return;
+        import('./supabaseVector').then(async ({ upsertVectorBatch }) => {
+            const items: {
+                memoryId: string;
+                charId: string;
+                vector: Float32Array;
+                node: MemoryNode;
+                dimensions: number;
+                model?: string;
+            }[] = [];
+            for (const node of embeddedNodes) {
+                const vec = await getByKey<MemoryVector>(STORE_MEMORY_VECTORS, node.id);
+                if (!vec) continue;
+                items.push({
+                    memoryId: node.id,
+                    charId: node.charId,
+                    vector: ensureFloat32(vec.vector),
+                    node,
+                    dimensions: vec.dimensions,
+                    model: vec.model,
+                });
+            }
+            for (let i = 0; i < items.length; i += 20) {
+                await upsertVectorBatch(rc, items.slice(i, i + 20)).catch(() => {});
+            }
+        }).catch(() => {});
+    },
+
     /** 更新访问记录（检索后调用） */
     touchAccess: async (id: string): Promise<void> => {
         const node = await getByKey<MemoryNode>(STORE_MEMORY_NODES, id);
@@ -338,6 +373,31 @@ function isLegacyVec(vec: unknown): boolean {
 }
 
 // ─── MemoryVector CRUD ────────────────────────────────
+
+/** Snapshot keys only. Read each upload page with its matching nodes in a single transaction. */
+export async function getUploadKeys(): Promise<IDBValidKey[]> {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        const req = db.transaction(STORE_MEMORY_VECTORS).objectStore(STORE_MEMORY_VECTORS).getAllKeys();
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+    });
+}
+
+export async function getUploadPage(keys: IDBValidKey[]): Promise<(MemoryVector & { node: MemoryNode })[]> {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction([STORE_MEMORY_VECTORS, STORE_MEMORY_NODES]);
+        const pairs = keys.map(key => ({
+            vector: tx.objectStore(STORE_MEMORY_VECTORS).get(key),
+            node: tx.objectStore(STORE_MEMORY_NODES).get(key),
+        }));
+        tx.oncomplete = () => resolve(pairs.flatMap(({ vector, node }) =>
+            vector.result && node.result && (!vector.result.charId || vector.result.charId === node.result.charId)
+                ? [{ ...vector.result, node: node.result, charId: node.result.charId }] : []));
+        tx.onabort = () => reject(tx.error || new Error('读取本地向量失败'));
+    });
+}
 
 export const MemoryVectorDB = {
     save: async (vec: MemoryVector) => {

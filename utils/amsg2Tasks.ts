@@ -89,9 +89,10 @@ export const describeExpirePolicy = (policy: ActiveMsg2ExpirePolicy): string =>
 
 /** 任务「要说什么」的一句话描述。fixed 有固定内容、prompted 有方向、auto 可带灵感。 */
 export const describeTaskMode = (
-  task: { mode: ActiveMsg2Mode; promptHint?: string; away?: boolean },
+  task: { mode: ActiveMsg2Mode; promptHint?: string; away?: boolean; dateLeave?: boolean },
 ): string => {
   if (task.away) return '离开后消息';
+  if (task.dateLeave) return '见面离开提醒';
   if (task.mode === 'fixed') return '固定消息';
   if (task.mode === 'prompted') return `提示方向「${task.promptHint || ''}」`;
   return task.promptHint ? `自动（灵感：${task.promptHint}）` : '自动';
@@ -201,17 +202,21 @@ export const currentOccurrenceMs = (
  * remoteStatus 是远端那一行的 status（拉到底账时顺带的投影，没有就不传）：
  * 一次性任务重试用完会被标 'failed' 留在远端，不会再被消费——这时候还说
  * 「待处理」是骗人，它不会有下文了。
+ * cronPaused 为真时（已向云端确认定时触发处于暂停态），未消费的任务明确显示暂停态，
+ * 避免与触发异常混淆。
  */
 export const describeTaskProgress = (
   task: ActiveMsg2TaskRecord,
   knownRemoteUuids: Set<string> | null,
   nowMs: number,
   remoteStatus?: string,
+  cronPaused?: boolean,
 ): string => {
-  if (isPendingTask(task, nowMs)) return '待触发';
-  if (knownRemoteUuids === null) return '已到点';
+  if (isPendingTask(task, nowMs)) return cronPaused ? '后台已暂停' : '待触发';
+  if (knownRemoteUuids === null) return cronPaused ? '已暂停·待恢复' : '已到点';
   if (!knownRemoteUuids.has(task.taskUuid)) return '已触发';
-  return remoteStatus === 'failed' ? '发送失败' : '已到点·待处理';
+  if (remoteStatus === 'failed') return '发送失败';
+  return cronPaused ? '已暂停·待恢复' : '已到点·待处理';
 };
 
 export const getPendingTasks = (

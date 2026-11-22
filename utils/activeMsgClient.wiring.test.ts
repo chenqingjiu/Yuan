@@ -34,7 +34,7 @@ describe('③ 凭据变更重传接线', () => {
     // 两个入口递进去的都是现组的配置对象，不是旧的 localXxx 草稿
     expect(sliceBetween(src, 'const handleSaveApi', 'const handleSaveVisionApi'))
       .toMatch(/const nextConfig = \{[\s\S]*commitApiConfig\(nextConfig\)/);
-    expect(sliceBetween(src, 'const applyPreset', 'const cancelPresetDeleteHold'))
+    expect(sliceBetween(src, 'const applyPreset', 'const openEditPreset'))
       .toContain('commitApiConfig(configFromPreset(preset))');
   });
 
@@ -49,12 +49,13 @@ describe('③ 凭据变更重传接线', () => {
 });
 
 describe('③ 失败可见化接线（远端 lastError 上卡片）', () => {
-  it('面板对账改拉全量投影 listRemoteTasksForChar，并用 describeRemoteLastError 渲染', () => {
+  it('面板对账改拉全量投影 listRemoteTasksForChar 与云端定时触发状态，并用 describeRemoteLastError 渲染', () => {
     const src = read('../components/chat/ActiveMsg2SettingsModal.tsx');
     expect(src).toContain('ActiveMsgClient.listRemoteTasksForChar(');
+    expect(src).toContain('ActiveMsgClient.getCronTriggerState(');
     expect(src).toContain('describeRemoteLastError(');
-    // 进度文案吸收远端 status（failed 终态不再谎报「待处理」）。
-    expect(src).toMatch(/describeTaskProgress\(t, knownRemoteUuids, now, remoteInfo\?\.status\)/);
+    // 进度文案同时吸收远端 status 与云端后台任务暂停态（cloudCronPaused）。
+    expect(src).toMatch(/describeTaskProgress\(t, knownRemoteUuids, now, remoteInfo\?\.status, cloudCronPaused\)/);
   });
 });
 
@@ -92,9 +93,9 @@ describe('② 订阅刷新接线（SW 标记 ↔ 主线程消费）', () => {
 });
 
 describe('④ 多设备说明文案', () => {
-  it('全局设置弹窗的通知区块里说明「推送跟着排程时所在的设备走」', () => {
+  it('全局设置弹窗的通知区块里说明「换设备要重新开启，会覆盖原来的订阅」', () => {
     const src = read('../components/settings/ActiveMsgGlobalSettingsModal.tsx');
-    expect(src).toContain('排程时所在的设备');
-    expect(src).toContain('重新保存一次');
+    expect(src).toContain('换了设备或浏览器');
+    expect(src).toContain('会覆盖原来的订阅');
   });
 });

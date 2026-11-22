@@ -1,13 +1,13 @@
 
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useOS } from '../context/OSContext';
 import { DB } from '../utils/db';
 import { GalleryImage, CharacterProfile } from '../types';
+import { resolveRefToDataUrl } from '../utils/blobRef';
+import { readAssistantMessage, splitInlineThinking } from '../utils/assistantThinking';
 import { safeResponseJson } from '../utils/safeApi';
 import ConfirmDialog from '../components/os/ConfirmDialog';
 import TokenImg from '../components/os/TokenImg';
-import GallerySelectionBar from '../components/gallery/GallerySelectionBar';
-import GalleryThumb from '../components/gallery/GalleryThumb';
 import { trackEvent } from '../utils/analytics';
 import { Star } from '@phosphor-icons/react';
 import {
@@ -17,7 +17,6 @@ import {
     removeContentFavoriteById,
     saveGalleryImageContentFavorite,
 } from '../utils/contentFavorites';
-import { groupImagesByDate, type GalleryGroup, type GalleryGroupMode } from '../utils/galleryGrouping';
 
 const Gallery: React.FC = () => {
     const { closeApp, characters, apiConfig, addToast } = useOS();
@@ -36,19 +35,10 @@ const Gallery: React.FC = () => {
 
     // Long-press delete state
     const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-    // 缩略图长按进多选的定时器，与上面相册卡那个分开，互不干扰
-    const thumbPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
     const [confirmDialog, setConfirmDialog] = useState<{ isOpen: boolean; title: string; message: string; variant: 'danger' | 'warning' | 'info'; onConfirm: () => void; } | null>(null);
 
     // Album image counts
     const [albumCounts, setAlbumCounts] = useState<Record<string, number>>({});
-
-    // ── 多选与日期分组（仅作用于 grid 视图，退出即清空）──
-    const [selectMode, setSelectMode] = useState(false);
-    const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-    const [groupMode, setGroupMode] = useState<GalleryGroupMode>('day');
-    /** 批量删除进行中：操作栏据此禁用并显示「删除中」，防止重复提交 */
-    const [isBatchDeleting, setIsBatchDeleting] = useState(false);
 
     useEffect(() => {
         // Load image counts for all characters
@@ -77,11 +67,11 @@ const Gallery: React.FC = () => {
         trackEvent('打开角色相册');
     };
 
-    /** 稳定引用：要传给 memo 化的 GalleryThumb，每次重建都会让浅比较失效 */
-    const handleImageClick = useCallback((img: GalleryImage) => {
+    const handleImageClick = (img: GalleryImage) => {
+        setShowChatContext(false);
         setSelectedImage(img);
         setView('detail');
-    }, []);
+    };
 
     const refreshSelectedFavorite = useCallback(async () => {
         if (!selectedImage) {
@@ -121,141 +111,9 @@ const Gallery: React.FC = () => {
 
     const handleBack = () => {
         if (view === 'detail') { setView('grid'); setShowChatContext(false); }
-        else if (view === 'grid') { setSelectMode(false); setSelectedIds(new Set()); setView('albums'); setActiveCharId(null); }
+        else if (view === 'grid') { setView('albums'); setActiveCharId(null); }
         else closeApp();
     };
-
-    // ── 日期分组 ──
-    // 只在 images / groupMode 变化时重算：选择态变化不触发，避免勾一张就整网格重分组
-    const groups = useMemo(() => groupImagesByDate(images, groupMode), [images, groupMode]);
-
-    // 组件卸载时清掉两个长按定时器，避免在已卸载组件上 setState
-    useEffect(() => () => {
-        if (thumbPressTimer.current) clearTimeout(thumbPressTimer.current);
-        if (longPressTimer.current) clearTimeout(longPressTimer.current);
-    }, []);
-
-    // ── 多选 ──
-    const exitSelectMode = useCallback(() => {
-        setSelectMode(false);
-        setSelectedIds(new Set());
-    }, []);
-
-    const toggleSelect = useCallback((id: string) => {
-        setSelectedIds(prev => {
-            const next = new Set(prev);
-            if (next.has(id)) next.delete(id);
-            else next.add(id);
-            return next;
-        });
-    }, []);
-
-    /** 全选 / 取消全选（范围＝当前角色整个相册，与分组无关）。 */
-    const toggleSelectAll = useCallback(() => {
-        setSelectedIds(prev => (
-            prev.size >= images.length && images.length > 0
-                ? new Set()
-                : new Set(images.map(img => img.id))
-        ));
-    }, [images]);
-
-    /** 组级全选 / 取消：整组都选中时点它就取消该组，否则补齐该组。 */
-    const toggleSelectGroup = useCallback((group: GalleryGroup) => {
-        setSelectedIds(prev => {
-            const next = new Set(prev);
-            const allIn = group.images.length > 0 && group.images.every(img => next.has(img.id));
-            for (const img of group.images) {
-                if (allIn) next.delete(img.id);
-                else next.add(img.id);
-            }
-            return next;
-        });
-    }, []);
-
-    // ── 批量删除 ──
-    /**
-     * 走 DB.deleteGalleryImages（分块单事务），而不是循环调单张删除 ——
-     * 收藏保留只跑一次，块与块之间让出主线程，几百张也不会把界面卡死。
-     * 删除结果如实区分「全部成功」与「部分失败」，后者提示可重试。
-     */
-    const runBatchDelete = useCallback(async (ids: string[], successMsg: string, eventName: string) => {
-        if (ids.length === 0) { setConfirmDialog(null); return; }
-        setIsBatchDeleting(true);
-        try {
-            const { deleted, failed } = await DB.deleteGalleryImages(ids);
-
-            const idSet = new Set(ids);
-            const remaining = images.filter(img => !idSet.has(img.id));
-            setImages(remaining);
-            // 主动同步角色列表计数，避免退回相册页时数字短暂不对
-            if (activeCharId) setAlbumCounts(prev => ({ ...prev, [activeCharId]: remaining.length }));
-
-            exitSelectMode();
-
-            if (failed > 0) {
-                addToast(`已删除 ${deleted} 张，${failed} 张失败，可重试`, 'error');
-            } else {
-                addToast(successMsg, 'success');
-            }
-            trackEvent(eventName, failed > 0 ? { 张数: deleted, 失败张数: failed } : { 张数: deleted });
-        } catch (error) {
-            console.error('[Gallery] 批量删除失败', error);
-            addToast('删除失败，请稍后重试', 'error');
-        } finally {
-            setIsBatchDeleting(false);
-            setConfirmDialog(null);
-        }
-    }, [images, activeCharId, exitSelectMode, addToast]);
-
-    /** 删除当前勾选的这批。 */
-    const confirmBatchDelete = useCallback(() => {
-        const idSet = new Set(selectedIds);
-        const ids = images.filter(img => idSet.has(img.id)).map(img => img.id);
-        if (ids.length === 0) return;
-        setConfirmDialog({
-            isOpen: true,
-            title: '删除照片',
-            message: `确定要删除选中的 ${ids.length} 张照片吗？此操作无法撤销。`,
-            variant: 'danger',
-            onConfirm: () => void runBatchDelete(ids, `已删除 ${ids.length} 张照片`, '批量删除相册照片'),
-        });
-    }, [selectedIds, images, runBatchDelete]);
-
-    /** 长按组头：整组删除（不走选中态，直接确认）。 */
-    const confirmGroupDelete = useCallback((group: GalleryGroup) => {
-        const ids = group.images.map(img => img.id);
-        if (ids.length === 0) return;
-        setConfirmDialog({
-            isOpen: true,
-            title: '删除照片',
-            message: `确定要删除「${group.label}」的全部 ${ids.length} 张照片吗？此操作无法撤销。`,
-            variant: 'danger',
-            onConfirm: () => void runBatchDelete(ids, `已删除「${group.label}」的 ${ids.length} 张照片`, '按日期删除相册照片'),
-        });
-    }, [runBatchDelete]);
-
-    /** 缩略图长按：直接进多选并选中这一张（与相册卡长按的交互语言一致）。 */
-    const handleThumbPressStart = useCallback((id: string) => {
-        if (selectMode) return;
-        thumbPressTimer.current = setTimeout(() => {
-            setSelectMode(true);
-            setSelectedIds(prev => new Set(prev).add(id));
-        }, 600);
-    }, [selectMode]);
-
-    const handleThumbPressEnd = useCallback(() => {
-        if (thumbPressTimer.current) {
-            clearTimeout(thumbPressTimer.current);
-            thumbPressTimer.current = null;
-        }
-    }, []);
-
-    /** 长按组头：直接对整组发起删除（不经过选中态，少两步操作）。 */
-    const handleGroupPressStart = useCallback((group: GalleryGroup) => {
-        thumbPressTimer.current = setTimeout(() => {
-            confirmGroupDelete(group);
-        }, 600);
-    }, [confirmGroupDelete]);
 
     // Long-press handlers for album deletion
     const handleAlbumPressStart = useCallback((charId: string) => {
@@ -268,11 +126,12 @@ const Gallery: React.FC = () => {
                 variant: 'danger',
                 onConfirm: async () => {
                     const imgs = await DB.getGalleryImages(charId);
-                    // 走批量通道：收藏保留只跑一次，几十上百张也是一次分块事务流
-                    await DB.deleteGalleryImages(imgs.map(img => img.id));
+                    for (const img of imgs) {
+                        await DB.deleteGalleryImage(img.id);
+                    }
                     setAlbumCounts(prev => ({ ...prev, [charId]: 0 }));
                     addToast('相册已清空', 'success');
-                    trackEvent('清空一个角色的相册', { 张数: imgs.length });
+                    trackEvent('清空一个角色的相册');
                     setConfirmDialog(null);
                 }
             });
@@ -295,11 +154,8 @@ const Gallery: React.FC = () => {
             message: '确定要删除这张照片吗？',
             variant: 'danger',
             onConfirm: async () => {
-                await DB.deleteGalleryImages([selectedImage.id]);
-                const remaining = images.filter(img => img.id !== selectedImage.id);
-                setImages(remaining);
-                // 相册页的计数也一并同步，避免退回去时数字还停在旧值
-                if (activeCharId) setAlbumCounts(prev => ({ ...prev, [activeCharId]: remaining.length }));
+                await DB.deleteGalleryImage(selectedImage.id);
+                setImages(prev => prev.filter(img => img.id !== selectedImage.id));
                 setView('grid');
                 setSelectedImage(null);
                 addToast('照片已删除', 'success');
@@ -335,6 +191,8 @@ Task: The user sent you a photo. Comment on it briefly (1-3 sentences) based on 
 Style: Casual, conversational, strictly NO AI-assistant tone. React as if you received this on a chat app.
 CRITICAL: Stay in character. If there's conversation context, your comment should naturally fit that context. Don't say anything that would be bizarre given what you two were just talking about.`;
 
+            const photoUrl = await resolveRefToDataUrl(selectedImage.url);
+            if (!photoUrl) throw new Error('找不到这张照片的原图。');
             const payload = {
                 model: apiConfig.model,
                 messages: [
@@ -346,7 +204,7 @@ CRITICAL: Stay in character. If there's conversation context, your comment shoul
                             {
                                 type: 'image_url',
                                 image_url: {
-                                    url: selectedImage.url
+                                    url: photoUrl
                                 }
                             }
                         ]
@@ -363,8 +221,9 @@ CRITICAL: Stay in character. If there's conversation context, your comment shoul
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${apiConfig.apiKey}`
                 },
-                body: JSON.stringify(payload)
-            });
+                body: JSON.stringify(payload),
+                __sullyMeta: { appId: 'gallery', appName: '相册', charId: char.id, charName: char.name, purpose: '照片看图点评' },
+            } as RequestInit);
 
             if (!response.ok) {
                 let errorMsg = `HTTP Error ${response.status}`;
@@ -388,18 +247,11 @@ CRITICAL: Stay in character. If there's conversation context, your comment shoul
                 throw new Error('AI 拒绝回复 (图片可能包含敏感内容)');
             }
 
-            let reviewText = choice?.message?.content;
-            if (!reviewText && choice?.message?.reasoning_content) {
-                reviewText = choice.message.reasoning_content;
-            }
-            if (!reviewText && choice?.text) reviewText = choice.text;
-            if (!reviewText && choice?.delta?.content) reviewText = choice.delta.content;
-
-            if (!reviewText) {
-                const debugStr = JSON.stringify(choice || data);
-                console.warn('AI Empty Response Structure:', data);
-                throw new Error(`AI 返回内容为空. Raw: ${debugStr.substring(0, 100)}...`);
-            }
+            const reviewText = [readAssistantMessage(choice?.message).content, choice?.text, readAssistantMessage(choice?.delta).content]
+                .filter((part): part is string => typeof part === 'string')
+                .map(part => splitInlineThinking(part).content.trim())
+                .find(Boolean);
+            if (!reviewText) throw new Error('模型没有返回点评正文，可以更换模型后重新生成。');
 
             await DB.updateGalleryImageReview(selectedImage.id, reviewText);
 
@@ -486,59 +338,24 @@ CRITICAL: Stay in character. If there's conversation context, your comment shoul
     );
 
     const renderGrid = () => (
-        <div
-            className="flex-1 overflow-y-auto animate-fade-in"
-            // 多选态底部升起操作栏，网格补足等高内边距，最后一行才不会被盖住
-            style={selectMode ? { paddingBottom: 'calc(5.5rem + var(--safe-bottom, 0px))' } : undefined}
-        >
+        <div className="flex-1 overflow-y-auto p-1.5 animate-fade-in">
             {images.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center text-slate-300 gap-3 py-20">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1} stroke="currentColor" className="w-14 h-14 opacity-40"><path strokeLinecap="round" strokeLinejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" /></svg>
                     <span className="text-sm">还没有照片</span>
                 </div>
             ) : (
-                groups.map(group => (
-                    <section key={group.key}>
-                        {/* 吸顶组头：长按直接删整组；多选态下右侧给「全选本组」 */}
-                        <div
-                            onTouchStart={() => handleGroupPressStart(group)}
-                            onTouchEnd={handleThumbPressEnd}
-                            onTouchCancel={handleThumbPressEnd}
-                            onMouseDown={() => handleGroupPressStart(group)}
-                            onMouseUp={handleThumbPressEnd}
-                            onMouseLeave={handleThumbPressEnd}
-                            className="sticky top-0 z-10 flex items-center gap-2 border-b border-slate-100 bg-slate-50/95 px-3 py-2 backdrop-blur"
-                        >
-                            <span className="text-[12px] font-semibold tracking-tight text-slate-700">{group.label}</span>
-                            <span className="font-mono text-[10px] text-slate-400">{group.images.length}</span>
-                            <div className="flex-1" />
-                            {selectMode && (
-                                <button
-                                    type="button"
-                                    onClick={() => toggleSelectGroup(group)}
-                                    className="rounded-full bg-white px-2.5 py-1 text-[10px] font-medium text-primary shadow-sm transition-transform active:scale-95"
-                                >
-                                    {group.images.every(img => selectedIds.has(img.id)) ? '取消本组' : '全选本组'}
-                                </button>
-                            )}
+                <div className="grid grid-cols-3 gap-1">
+                    {images.map(img => (
+                        <div key={img.id} onClick={() => handleImageClick(img)} className="aspect-square bg-slate-100 relative cursor-pointer overflow-hidden rounded-sm">
+                            {/* 相册图存的是 blobref 令牌（见 utils/blobRef.ts），TokenImg 会解析成 objectURL；
+                                旧的 base64 / http 图原样透传，两种都显示得出来 */}
+                            <TokenImg value={img.url} className="w-full h-full object-cover hover:scale-105 transition-transform duration-300" loading="lazy" />
+                            {img.review && <div className="absolute top-1.5 right-1.5 w-2 h-2 bg-primary rounded-full ring-2 ring-white shadow-sm"></div>}
+                            {img.savedDate && <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/50 to-transparent px-1.5 pb-1 pt-3"><span className="text-[8px] text-white/80 font-mono">{img.savedDate}</span></div>}
                         </div>
-
-                        <div className="grid grid-cols-3 gap-1 p-1.5">
-                            {group.images.map(img => (
-                                <GalleryThumb
-                                    key={img.id}
-                                    image={img}
-                                    selectMode={selectMode}
-                                    isSelected={selectedIds.has(img.id)}
-                                    onOpen={handleImageClick}
-                                    onToggle={toggleSelect}
-                                    onPressStart={handleThumbPressStart}
-                                    onPressEnd={handleThumbPressEnd}
-                                />
-                            ))}
-                        </div>
-                    </section>
-                ))
+                    ))}
+                </div>
             )}
         </div>
     );
@@ -577,31 +394,31 @@ CRITICAL: Stay in character. If there's conversation context, your comment shoul
             </div>
 
             {/* Review & Context Section */}
-            <div className="shrink-0 w-full bg-[#161616] border-t border-white/10 z-40 pb-safe">
+            <div className="flex flex-col shrink-0 min-h-0 max-h-[60%] w-full bg-[#161616] border-t border-white/10 z-40 pb-safe">
                 {selectedImage.review ? (
-                    <div className="p-5 animate-slide-up">
-                        <div className="flex items-start gap-3 mb-3">
+                    <div className="flex flex-col min-h-0 p-4 animate-slide-up">
+                        <div role="region" aria-label="照片点评" tabIndex={0} className="flex items-start gap-3 min-h-0 overflow-y-auto overscroll-contain touch-pan-y">
                             <TokenImg value={characters.find(c => c.id === activeCharId)?.avatar} className="w-9 h-9 rounded-full border border-white/20 object-cover shadow-sm" />
-                            <div className="flex-1">
+                            <div className="flex-1 min-w-0 [overflow-wrap:anywhere]">
                                 <div className="text-xs font-bold text-white/50 mb-1.5 uppercase tracking-wide">{characters.find(c => c.id === activeCharId)?.name} 的点评</div>
-                                <p className="text-[15px] text-white/90 leading-relaxed font-light select-text">"{selectedImage.review}"</p>
+                                <p className="text-[15px] text-white/90 leading-relaxed font-light select-text whitespace-pre-wrap">"{selectedImage.review}"</p>
                             </div>
                         </div>
-                        <div className="flex justify-between items-center border-t border-white/5 pt-2 mt-2">
+                        <div className="shrink-0 flex justify-between items-center border-t border-white/5 pt-1 mt-2">
                             {selectedImage.chatContext && selectedImage.chatContext.length > 0 && (
                                 <button onClick={() => setShowChatContext(!showChatContext)} className="text-[10px] text-white/30 hover:text-white/60 transition-colors flex items-center gap-1 px-2 py-1">
                                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-3 h-3"><path strokeLinecap="round" strokeLinejoin="round" d="M8.625 12a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H8.25m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H12m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 0 1-2.555-.337A5.972 5.972 0 0 1 5.41 20.97a5.969 5.969 0 0 1-.474-.065 4.48 4.48 0 0 0 .978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25Z" /></svg>
                                     {showChatContext ? '收起对话' : '当时的对话'}
                                 </button>
                             )}
-                            <button onClick={handleReview} disabled={isReviewing} className="text-[10px] text-white/40 hover:text-primary transition-colors flex items-center gap-1 px-2 py-1 ml-auto">
+                            <button onClick={handleReview} disabled={isReviewing} className="min-h-10 text-xs text-white/70 hover:text-primary transition-colors flex items-center gap-1 px-2 py-1 ml-auto">
                                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-3 h-3"><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>
                                 {isReviewing ? 'Thinking...' : '重新生成'}
                             </button>
                         </div>
                         {/* Chat context expandable */}
                         {showChatContext && selectedImage.chatContext && (
-                            <div className="mt-3 bg-white/5 rounded-xl p-3 space-y-1.5 max-h-40 overflow-y-auto">
+                            <div className="mt-2 shrink-0 bg-white/5 rounded-xl p-3 space-y-1.5 max-h-[min(7rem,15dvh)] overflow-y-auto overscroll-contain [overflow-wrap:anywhere]">
                                 <div className="text-[9px] text-white/30 uppercase tracking-wider mb-2 font-bold">拍照时的对话记录</div>
                                 {selectedImage.chatContext.map((line, i) => (
                                     <div key={i} className="text-[11px] text-white/50 leading-relaxed">{line}</div>
@@ -610,7 +427,7 @@ CRITICAL: Stay in character. If there's conversation context, your comment shoul
                         )}
                     </div>
                 ) : (
-                    <div className="p-5 flex flex-col items-center gap-3">
+                    <div className="min-h-0 overflow-y-auto overscroll-contain p-5 flex flex-col items-center gap-3">
                         <button
                             onClick={handleReview}
                             disabled={isReviewing}
@@ -650,63 +467,19 @@ CRITICAL: Stay in character. If there's conversation context, your comment shoul
                 <div className="bg-white/80 backdrop-blur-xl border-b border-slate-100/60 shrink-0 z-10 sticky top-0" style={{ paddingTop: 'var(--safe-top)' }}>
                     <div className="h-16 flex items-center px-4">
                         <button onClick={handleBack} className="p-2 -ml-2 rounded-full hover:bg-black/5 active:scale-90 transition-transform">
-                            {selectMode ? (
-                                <span className="block px-1 text-sm font-medium text-primary">取消</span>
-                            ) : (
-                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 text-slate-600"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
-                            )}
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 text-slate-600"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" /></svg>
                         </button>
                         <h1 className="text-lg font-semibold text-slate-800 ml-2 tracking-tight">
-                            {selectMode && view === 'grid'
-                                ? '选择照片'
-                                : view === 'albums' ? '相册' : characters.find(c => c.id === activeCharId)?.name || '相册'}
+                            {view === 'albums' ? '相册' : characters.find(c => c.id === activeCharId)?.name || '相册'}
                         </h1>
-                        {view === 'grid' && !selectMode && <span className="text-xs text-slate-400 ml-2 font-mono">{images.length}</span>}
-                        {view === 'grid' && (
-                            <button
-                                type="button"
-                                onClick={() => (selectMode ? exitSelectMode() : setSelectMode(true))}
-                                disabled={isBatchDeleting || images.length === 0}
-                                className="ml-auto rounded-full px-3 py-1.5 text-[13px] font-medium text-primary transition-transform active:scale-95 disabled:opacity-40"
-                            >
-                                {selectMode ? '完成' : '选择'}
-                            </button>
-                        )}
+                        {view === 'grid' && <span className="text-xs text-slate-400 ml-2 font-mono">{images.length}</span>}
                     </div>
-
-                    {/* 分组粒度切换。只在网格的浏览态出现 —— 多选时视觉噪音已经够多了 */}
-                    {view === 'grid' && !selectMode && images.length > 0 && (
-                        <div className="flex items-center gap-1 px-4 pb-2">
-                            {(['day', 'month'] as GalleryGroupMode[]).map(mode => (
-                                <button
-                                    key={mode}
-                                    type="button"
-                                    onClick={() => setGroupMode(mode)}
-                                    className={`rounded-full px-3 py-1 text-[11px] font-medium transition-colors ${
-                                        groupMode === mode ? 'bg-primary/10 text-primary' : 'text-slate-400'
-                                    }`}
-                                >
-                                    {mode === 'day' ? '按天' : '按月'}
-                                </button>
-                            ))}
-                        </div>
-                    )}
                 </div>
             )}
 
             {view === 'albums' && <div className="flex-1 overflow-y-auto min-h-0">{renderAlbums()}</div>}
             {view === 'grid' && renderGrid()}
             {view === 'detail' && renderDetail()}
-
-            {view === 'grid' && selectMode && (
-                <GallerySelectionBar
-                    selectedCount={selectedIds.size}
-                    totalCount={images.length}
-                    busy={isBatchDeleting}
-                    onToggleSelectAll={toggleSelectAll}
-                    onDelete={confirmBatchDelete}
-                />
-            )}
         </div>
     );
 };

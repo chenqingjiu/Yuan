@@ -48,9 +48,7 @@ describe('CallApp runtime references', () => {
     const preferenceSource = readFileSync(path.resolve(__dirname, './callPreferences.ts'), 'utf8');
     const preferenceSheetSource = readFileSync(path.resolve(__dirname, '../components/call/CallPreferencesSheet.tsx'), 'utf8');
 
-    // 上游改为按 STT 供应商区分：浏览器直出直接替换，云端识别结果追加到已有草稿
-    expect(source).toContain('onFinal: (t) => {');
-    expect(source).toContain("setDraftInput(prev => (prev.trim() ? `${prev.trim()} ${t}` : t))");
+    expect(source).toContain("onFinal: (t) => setDraftInput(t)");
     expect(source).toContain("await requestAssistantReply(input, userDbId, pendingTouchesForTurn, true, userCameraSnapshotForTurn)");
     expect(source).toContain("{sendingBusy ? '…' : '发送'}");
     expect(source).toMatch(/const beginSelectedCall[\s\S]*?setViewMode\('in-call'\);\s+setCallStartedAt\(Date\.now\(\)\);\s+setCallState\('listening'\);/);
@@ -85,21 +83,11 @@ describe('CallApp runtime references', () => {
     expect(preferenceSheetSource).toContain('语音和视频通话都只在你点“播放语音”时才生成');
   });
 
-  it('announces the call update once and spotlights the lower-left preferences entry', () => {
+  it('opens call preferences directly from the existing entry without an update notice', () => {
     const source = readFileSync(path.resolve(__dirname, '../apps/CallApp.tsx'), 'utf8');
-    const announcementSource = readFileSync(path.resolve(__dirname, '../components/call/CallUpdateAnnouncement.tsx'), 'utf8');
-    const preferenceSource = readFileSync(path.resolve(__dirname, './callPreferences.ts'), 'utf8');
-
-    expect(source).toContain('useState(shouldShowCallUpdateAnnouncement)');
-    expect(source).toContain('markCallUpdateAnnouncementSeen()');
-    expect(source).toContain('data-testid="call-preferences-entry"');
-    expect(preferenceSource).toContain("CALL_UPDATE_ANNOUNCEMENT_KEY = 'sully-call-update-preferences-2026-08-v2'");
-    expect(announcementSource).toContain('data-testid="call-update-announcement"');
-    expect(announcementSource).toContain('data-testid="call-settings-spotlight"');
-    expect(announcementSource).toContain('通话偏好现在有三项');
-    expect(announcementSource).toContain('可以设置谁先开口');
-    expect(announcementSource).toContain('两种通话都不会提前生成语音');
-    expect(announcementSource).toContain('沉默后主动接话改为按需开启');
+    expect(source).not.toContain('<CallUpdateAnnouncement');
+    expect(source).toContain('onClick={openCallPreferencesPanel} title="通话偏好"');
+    expect(source).toContain('setShowCallPreferences(true)');
   });
 
   it('offers game-like video layouts and a collapsible immersive subtitle', () => {
@@ -215,7 +203,7 @@ describe('CallApp runtime references', () => {
     expect(exportSource).toContain('collectBlobRefs(s, referencedBlobTokens)');
     expect(exportSource).toContain('await writeBlobsToZip(');
     expect(exportSource).toContain("metadata.cameraSnapshotExpired = true");
-    expect(exportSource).toContain('|| item.metadata?.cameraSnapshotRef');
+    expect(exportSource).toContain("|| !!m.metadata?.cameraSnapshotRef");
     expect(exportSource).toContain("companionAvatar: c.companionAvatar");
   });
 

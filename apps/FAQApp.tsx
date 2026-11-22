@@ -4,6 +4,11 @@ import { HOME_CHANGELOG } from '../utils/homeUpdate';
 
 import React, { useEffect, useState } from 'react';
 import { useOS } from '../context/OSContext';
+import { AppID } from '../types';
+import { useAppShortcut } from '../utils/appShortcutLaunch';
+import { SULLY_HELP_DESK_ID } from '../utils/sullyIdentity';
+import { buildHelpDeskKnowledge } from '../utils/sullyHelpDesk';
+import { SullyHelpDesk } from '../components/SullyHelpDesk';
 import { Sparkle } from '@phosphor-icons/react';
 import {
     FAQ_TARGET_SECTION_KEY,
@@ -33,6 +38,7 @@ const FAQ_DATA = [
     },
     {
         q: "1. 进不去网页 / 白屏 / 点了没反应",
+        supportAnswer: "先问整台小手机还是单个页面白屏、在哪个操作后发生；只凭白屏无法确认是网络还是界面加载问题。",
         reason: "网络有点小脾气，不够通畅。",
         solution: "需要一点点“魔法”才能连上外网。\n如果你不知道什么是“梯子/魔法”，请自行搜索一下~ \n这不是软件坏啦，是网路不通。",
         icon: "https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1fa84.png",
@@ -47,6 +53,7 @@ const FAQ_DATA = [
     },
     {
         q: "3. 为什么拉取不到模型列表？",
+        supportAnswer: "核对服务商给的接口地址、接口类型和模型列表支持情况。不同接口的路径约定不同，不能统一追加 /v1。",
         reason: "很多时候是填写的地址（URL）差了一点点。",
         solution: "请仔细检查你的链接：\n1. 后面是不是漏掉了 `/v1` 这个小尾巴？\n2. 复制时是否多带了空格？\n3. 地址不对是敲不开门的哦。",
         icon: "https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f50d.png",
@@ -54,6 +61,7 @@ const FAQ_DATA = [
     },
     {
         q: "4. 出现红色弹窗 (API 报错)",
+        supportAnswer: "看报错状态、调用用途和去掉隐私的错误短句，按接口排查手册判断；仅在提示上下文过长时检查原文范围。",
         reason: "情况A：如果你最近发了很多高清图，或者聊得太久了。\n情况B：没发图也报错？可能是提供接口的那边欠费或波动。",
         solution: "**情况A**：进【设置】，把“上下文条数”调低一点（例如 20-50）。\n**情况B**：请直接联系你购买/获取 API 的那个渠道哦，模拟器本身是无辜哒。",
         icon: "https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/26a0.png",
@@ -75,6 +83,7 @@ const FAQ_DATA = [
     },
     {
         q: "7. 遇到奇怪的 Bug 怎么办？",
+        supportAnswer: "先记录所在页面、复现步骤和去掉私密信息的错误原文。客服窗口只能协助排查，无法接收备份或代为报修。",
         reason: "可以在群里问，但严肃报修需要“病历本”。",
         solution: "请去桌面【设置】→【数据备份】导出 JSON 文件发给我。\n只有复现了问题，才能修好它。",
         icon: "https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f691.png",
@@ -97,12 +106,13 @@ const FAQ_DATA = [
     {
         q: "10. 导入的表情包不显示 / 导入没反应？",
         reason: "通常是格式不对，或者链接无效。",
-        solution: "1. **严格检查格式**：必须是 `名字--URL`，中间是**两个减号**！\n   错误：`滑稽 http://...`\n   正确：`滑稽--http://...`\n2. **检查链接**：必须是图片直链（.jpg/.png/.gif 结尾）。\n3. **一行一个**：不要把所有内容写在一行里。",
+        solution: "在私聊点笑脸，选分类 → 图片格的「＋」，每行填一个 `名字--图片直链`，点「添加至当前分类」。直链打开应直接显示图片，也可以没有文件后缀。\n已经导入却出现破图时，点分类栏最右的铅笔 →「刷新排查」。可以查看失效名单，确认后清除。显示「待重试」的表情会保留。",
         icon: "https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f5bc.png",
         color: "bg-cyan-50 text-cyan-700"
     },
     {
         q: "11. 点聊天输入框没反应 / 键盘唤不起来？",
+        supportAnswer: "询问是否在导入美化后发生。先试默认气泡和关闭该角色聊天背景。若考虑「外观 → 聊天界面 → 还原白框美化」，先说明它会重置全局和所有角色的白框 CSS，让用户决定是否保留自己的搭配。",
         reason: "多半是随备份一起导入的美化在捣乱：白框自定义 CSS、气泡主题或聊天背景把输入框盖住/禁用了。这类数据跟着备份走，所以重启、重新导入备份都没用，而全新页面（没导数据）反而正常。",
         solution: "按顺序排查：\n1. 【外观】→【聊天界面】→ **还原白框美化**（一键清掉全局和所有角色的白框 CSS）。\n2. 点顶部角色名 → 把「气泡样式」换回默认。\n3. 关掉该角色的聊天背景图。\n4. 还不行：换个浏览器（如 Safari）打开同一链接导入备份试试；仍复现请把备份 JSON 按第 7 条发给作者。",
         icon: "https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/2328.png",
@@ -242,407 +252,14 @@ const CHANGELOG_ENTRIES: ChangelogEntry[] = [
     },
 ];
 
-type Tab = 'faq' | 'changelog' | 'guide';
+const helpDeskKnowledge = buildHelpDeskKnowledge(FAQ_DATA, CHANGELOG_ENTRIES);
 
-// 「使用说明」：把 SullyOS 里目前所有 App 列出来，讲清用途、怎么用、会关联到哪个 App。
-// 数据源参考 constants.tsx 的 INSTALLED_APPS 与 types.ts 的 AppID 注释，保持一致。
-interface GuideEntry {
-    name: string;      // 桌面上显示的名字
-    icon: string;      // twemoji 图
-    color: string;     // 卡片配色
-    desc: string;      // 这个 App 是干嘛的
-    how: string[];     // 怎么用（几条步骤）
-    links: string[];   // 会关联到哪些 App
-}
-
-const GUIDE_DATA: GuideEntry[] = [
-    {
-        name: '神经链接',
-        icon: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f916.png',
-        color: 'from-indigo-50 to-violet-50 border-indigo-200',
-        desc: '角色管理中枢。你所有的角色都住在这里，可以新建、编辑、切换。',
-        how: [
-            '打开后先选一个角色，或点「新建」创造新角色。',
-            '可以编辑角色名字、头像、性格、世界观、世界书、立绘等。',
-            '时间感知、记忆开关、日程开关等也在这里配置。',
-        ],
-        links: ['聊天', '记忆宫殿', '世界书', '查手机'],
-    },
-    {
-        name: '记忆宫殿',
-        icon: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f9e0.png',
-        color: 'from-violet-50 to-purple-50 border-violet-200',
-        desc: '把角色对你的记忆整理成可视化的房间，每个房间装一类记忆。',
-        how: [
-            '进入后能看到七个房间，分别对应不同的记忆类型。',
-            '点开房间查看具体记忆条目，可以翻看或清理。',
-        ],
-        links: ['神经链接', '聊天'],
-    },
-    {
-        name: 'Message（聊天）',
-        icon: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4ac.png',
-        color: 'from-green-50 to-emerald-50 border-green-200',
-        desc: '和角色私聊的主阵地。发消息、看角色回复、上下翻历史。',
-        how: [
-            '发完消息后，点顶部标题栏右侧的闪电按钮，角色才会思考并回复。',
-            '点顶部角色名可以切换角色、换气泡样式、看世界书等。',
-            '右上角「+」可以发图片、引用回忆等。',
-        ],
-        links: ['神经链接', '记忆宫殿', '世界书', '拾光', '手账'],
-    },
-    {
-        name: '电话',
-        icon: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4de.png',
-        color: 'from-emerald-50 to-teal-50 border-emerald-200',
-        desc: '和角色语音/视频通话（VRM / Live2D），真人语音陪伴。',
-        how: [
-            '选一个角色，点拨打即可接通。',
-            '可在设置里选择音色（可到「捏声音」定制）。',
-        ],
-        links: ['神经链接', '捏声音'],
-    },
-    {
-        name: '群聊',
-        icon: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f465.png',
-        color: 'from-violet-50 to-indigo-50 border-violet-200',
-        desc: '把多个角色拉到一个群里，大家一起聊天。',
-        how: [
-            '新建群聊，把角色们加进来。',
-            '在群里发消息，多个角色会互相回应、一起讨论。',
-        ],
-        links: ['神经链接', '聊天'],
-    },
-    {
-        name: '小小窝',
-        icon: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f3e0.png',
-        color: 'from-rose-50 to-pink-50 border-rose-200',
-        desc: '角色的家，可以装修、摆放家具、换立绘。',
-        how: [
-            '进入后点顶部「装修」进入编辑模式。',
-            '直接点画面中央的角色小人可以换 Q 版立绘。',
-            '家园（多角色大世界）也从这里进入。',
-        ],
-        links: ['家园', '神经链接'],
-    },
-    {
-        name: '家园',
-        icon: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f305.png',
-        color: 'from-emerald-50 to-lime-50 border-emerald-200',
-        desc: '同世界观的多角色大世界，多个角色一起生活、互相联动。',
-        how: [
-            '从「小小窝 · 像素家园」进入（桌面没有独立图标）。',
-            '每个角色独立思考，观察驱动演绎，会主动发生互动。',
-        ],
-        links: ['小小窝', '神经链接', '聊天'],
-    },
-    {
-        name: '查手机',
-        icon: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4f1.png',
-        color: 'from-slate-50 to-gray-50 border-slate-200',
-        desc: '查看角色手机的屏幕画面（Screenlife），看他在刷什么、和谁聊天。',
-        how: [
-            '选一个角色，就能看到他手机上的实时画面。',
-            '可以触发查手机，或指定一场「人格模拟」演出。',
-        ],
-        links: ['神经链接', '聊天', '日程'],
-    },
-    {
-        name: '见面',
-        icon: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f495.png',
-        color: 'from-pink-50 to-rose-50 border-pink-200',
-        desc: '和角色约会的模式，面对面对话、一起经历当下时刻。',
-        how: [
-            '选好角色和场景，进入「见面」模式。',
-            '对话会在约会界面进行，有实时的时间与氛围。',
-        ],
-        links: ['神经链接', '聊天'],
-    },
-    {
-        name: '档案',
-        icon: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4c3.png',
-        color: 'from-blue-50 to-sky-50 border-blue-200',
-        desc: '看你和角色相处的完整档案、相处数据、生活统计。',
-        how: [
-            '打开查看角色与你相处的各项记录与统计。',
-            '「生活统计」会记录作息、习惯、纪念日等。',
-        ],
-        links: ['神经链接', '聊天', '手账'],
-    },
-    {
-        name: '存钱罐',
-        icon: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1fa99.png',
-        color: 'from-lime-50 to-green-50 border-lime-200',
-        desc: '和角色一起存钱、记账的小游戏，培养默契。',
-        how: [
-            '每天和角色一起存一笔，攒下来的钱可以用来做一些事。',
-            '看共同存款的成长曲线。',
-        ],
-        links: ['神经链接', '聊天'],
-    },
-    {
-        name: '交换日记',
-        icon: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4dd.png',
-        color: 'from-amber-50 to-yellow-50 border-amber-200',
-        desc: '和角色互写日记，记录每天的心情和事。',
-        how: [
-            '写下今天想说的话，角色也会回一篇。',
-            '可以翻看往期的往来日记。',
-        ],
-        links: ['神经链接', '聊天'],
-    },
-    {
-        name: 'Spark',
-        icon: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f525.png',
-        color: 'from-red-50 to-orange-50 border-red-200',
-        desc: '角色「生活流」社交动态，角色会发一些日常碎片动态。',
-        how: [
-            '像刷朋友圈一样刷角色的动态。',
-            '可以点赞、评论，角色可能会回应。',
-        ],
-        links: ['神经链接', '聊天'],
-    },
-    {
-        name: '自习室',
-        icon: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4da.png',
-        color: 'from-emerald-50 to-green-50 border-emerald-200',
-        desc: '和角色一起学习/自习，番茄钟陪伴。',
-        how: [
-            '选一个专注时长，和角色一起进入自习状态。',
-            '角色会陪着你，结束时互相总结。',
-        ],
-        links: ['神经链接', '聊天'],
-    },
-    {
-        name: 'TRPG',
-        icon: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f3ae.png',
-        color: 'from-orange-50 to-amber-50 border-orange-200',
-        desc: '和角色玩文字冒险 / TRPG 跑团小游戏。',
-        how: [
-            '选角色、选剧本，进入冒险。',
-            '角色扮演 GM 推进剧情，你做选择。',
-        ],
-        links: ['神经链接', '聊天'],
-    },
-    {
-        name: '笔友会',
-        icon: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4d6.png',
-        color: 'from-amber-50 to-orange-50 border-amber-200',
-        desc: '和角色写小说 / 接龙，共同创作故事。',
-        how: [
-            '开一篇新故事，和角色轮流写下去。',
-            '也可以续写、改写已有篇章。',
-        ],
-        links: ['神经链接', '聊天', '拾光'],
-    },
-    {
-        name: '拾光（番外）',
-        icon: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1fab6.png',
-        color: 'from-amber-50 to-yellow-50 border-amber-200',
-        desc: '把你们的故事生成小说式番外，收藏后可以转发给角色。',
-        how: [
-            '输入一个「指令」（如：写一段周末约会），生成番外。',
-            '生成的小说可以收藏、回看，也可转发给角色——会写入记忆并注入聊天。',
-        ],
-        links: ['聊天', '记忆宫殿', '笔友会'],
-    },
-    {
-        name: '写歌',
-        icon: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f3b5.png',
-        color: 'from-fuchsia-50 to-purple-50 border-fuchsia-200',
-        desc: '和角色一起写歌词、写歌。',
-        how: [
-            '定主题和曲风，角色帮你想词、你一起改。',
-            '写好的歌可以保存下来。',
-        ],
-        links: ['神经链接', '聊天', '音乐'],
-    },
-    {
-        name: '彼方',
-        icon: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f30d.png',
-        color: 'from-indigo-50 to-blue-50 border-indigo-200',
-        desc: '角色自主登入的虚拟世界，角色会自己在里面看书、听歌、留言。',
-        how: [
-            '进入彼方看角色的小世界和活动卡。',
-            '角色活动会自动注入聊天与记忆，成为话题。',
-        ],
-        links: ['聊天', '记忆宫殿', '神经链接'],
-    },
-    {
-        name: '时光契约',
-        icon: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4c5.png',
-        color: 'from-cyan-50 to-sky-50 border-cyan-200',
-        desc: '日程管理。给角色安排一天作息、任务、约会、纪念日。',
-        how: [
-            '按「日期」给角色排日程，角色会按此作息。',
-            '加纪念日（♥），会显示在桌面月历、手账和聊天里。',
-            '「日历」页能看当月节假日和纪念日。',
-        ],
-        links: ['神经链接', '聊天', '查手机', '手账'],
-    },
-    {
-        name: '世界书',
-        icon: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f30f.png',
-        color: 'from-indigo-50 to-violet-50 border-indigo-200',
-        desc: '给角色附加世界观、设定、剧情细节，让角色更立体。',
-        how: [
-            '新建世界书条目，写设定内容。',
-            '在「神经链接」或聊天顶部把世界书挂到角色身上。',
-        ],
-        links: ['神经链接', '聊天'],
-    },
-    {
-        name: '热点',
-        icon: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4f0.png',
-        color: 'from-red-50 to-rose-50 border-red-200',
-        desc: '分时段的多平台热榜，决定角色可能聊起的话题。',
-        how: [
-            '打开看当前热点。',
-            '角色可能会根据热点跟你聊起相关话题。',
-        ],
-        links: ['聊天', '神经链接'],
-    },
-    {
-        name: '使用帮助',
-        icon: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4da.png',
-        color: 'from-indigo-50 to-sky-50 border-indigo-200',
-        desc: '就是你现在看的这个 App：常见问题、更新日志、使用说明。',
-        how: [
-            '顶部切换「常见问题 / 更新日志 / 使用说明」。',
-        ],
-        links: [],
-    },
-    {
-        name: '相册',
-        icon: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4f7.png',
-        color: 'from-orange-50 to-amber-50 border-orange-200',
-        desc: '存放你和角色一起产生的图片。',
-        how: [
-            '浏览、查看聊天里生成的图片和截图。',
-        ],
-        links: ['聊天', '神经链接'],
-    },
-    {
-        name: '自由活动',
-        icon: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f6b6.png',
-        color: 'from-rose-50 to-pink-50 border-rose-200',
-        desc: '角色的「小红书」自由活动，角色自主逛、发布内容。',
-        how: [
-            '看角色发布的动态和逛街记录。',
-        ],
-        links: ['神经链接', '聊天', '小红书图库'],
-    },
-    {
-        name: '小红书图库',
-        icon: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f3f7.png',
-        color: 'from-red-50 to-rose-50 border-red-200',
-        desc: '小红书风格的图片素材库，可用来发布/分享。',
-        how: [
-            '选图、编辑，用于角色发布动态或分享给角色。',
-        ],
-        links: ['自由活动', '聊天'],
-    },
-    {
-        name: '气泡工坊',
-        icon: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f3a8.png',
-        color: 'from-purple-50 to-fuchsia-50 border-purple-200',
-        desc: '自定义聊天气泡样式，给角色做专属皮肤。',
-        how: [
-            '新建/编辑气泡主题，改配色、圆角、边框等。',
-            '在聊天顶部「气泡样式」里选用。',
-        ],
-        links: ['聊天', '外观', '神经链接'],
-    },
-    {
-        name: '外观',
-        icon: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f3a8.png',
-        color: 'from-slate-50 to-gray-50 border-slate-200',
-        desc: '系统外观设置：主题、壁纸、启动器组件、聊天界面美化。',
-        how: [
-            '切主题、换壁纸、布置桌面组件和小部件。',
-            '「聊天界面」里能还原白框美化、关背景图等（排查输入框问题也在这）。',
-        ],
-        links: ['设置', '气泡工坊', '启动器'],
-    },
-    {
-        name: '设置',
-        icon: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f6e0.png',
-        color: 'from-slate-50 to-gray-50 border-slate-200',
-        desc: '系统设置：API、模型、上下文、数据备份等。',
-        how: [
-            '配置 API 地址（记得带 /v1）、模型、上下文条数。',
-            '「数据备份」可以导出 JSON 文件，出 bug 时发给作者。',
-        ],
-        links: ['外观', '使用帮助'],
-    },
-    {
-        name: '攻略本',
-        icon: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4dc.png',
-        color: 'from-slate-50 to-gray-50 border-slate-200',
-        desc: '角色攻略你的小游戏，回合制培养好感度。',
-        how: [
-            '选角色、选场景，一回合回合一回合地攻略。',
-            '结局会有结算卡片，可回放历史攻略。',
-        ],
-        links: ['神经链接', '聊天'],
-    },
-    {
-        name: '都市人生',
-        icon: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f3db.png',
-        color: 'from-purple-50 to-violet-50 border-purple-200',
-        desc: '和角色共同经营的小世界 / 模拟人生。',
-        how: [
-            '进入后和角色一起生活、经营日常。',
-        ],
-        links: ['神经链接', '聊天'],
-    },
-    {
-        name: '特别时光',
-        icon: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f338.png',
-        color: 'from-pink-50 to-rose-50 border-pink-200',
-        desc: '节日 / 纪念日特别活动（情人节、生日等）。',
-        how: [
-            '在特定日子打开，会有对应角色的特别互动。',
-        ],
-        links: ['神经链接', '聊天', '日程'],
-    },
-    {
-        name: '音乐',
-        icon: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f3b6.png',
-        color: 'from-rose-50 to-pink-50 border-rose-200',
-        desc: '听歌、音乐播放器。',
-        how: [
-            '选歌播放，桌面会有正在播放的小组件。',
-        ],
-        links: ['写歌', '外观'],
-    },
-    {
-        name: '捏声音',
-        icon: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f3a4.png',
-        color: 'from-amber-50 to-yellow-50 border-amber-200',
-        desc: '给角色定制声音音色（MiniMax）。',
-        how: [
-            '在「电话」的「捏声音」入口进入，定制音色后用于语音通话。',
-        ],
-        links: ['电话', '神经链接'],
-    },
-    {
-        name: '捏脸·开发',
-        icon: 'https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f527.png',
-        color: 'from-amber-50 to-orange-50 border-amber-200',
-        desc: '仅开发模式可见。向捏人器指定类目追加自定义部件。',
-        how: [
-            '在设置页连点 5 下解锁开发模式后出现。',
-        ],
-        links: ['设置', '神经链接'],
-    },
-];
+type Tab = 'faq' | 'changelog' | 'support';
 
 const FAQApp: React.FC = () => {
     const { closeApp } = useOS();
     const [tab, setTab] = useState<Tab>('faq');
     const [activeChangelog, setActiveChangelog] = useState<ChangelogEntry | null>(null);
-    const [expandedGuide, setExpandedGuide] = useState<string | null>(null);
 
     useEffect(() => {
         try {
@@ -658,6 +275,13 @@ const FAQApp: React.FC = () => {
         } catch { /* ignore */ }
     }, []);
 
+    useAppShortcut(AppID.FAQ, intent => {
+        if (intent.entryId === SULLY_HELP_DESK_ID) {
+            setActiveChangelog(null);
+            setTab('support');
+        }
+    });
+
     const handleBack = () => {
         if (activeChangelog) {
             setActiveChangelog(null);
@@ -668,9 +292,7 @@ const FAQApp: React.FC = () => {
 
     const headerTitle = activeChangelog
         ? activeChangelog.title
-        : tab === 'changelog' ? '更新日志'
-        : tab === 'guide' ? '使用说明'
-        : '常见问题';
+        : tab === 'support' ? '使用帮助' : tab === 'changelog' ? '更新日志' : '常见问题';
 
     return (
         <div className="h-full w-full bg-slate-50 flex flex-col font-light">
@@ -712,21 +334,18 @@ const FAQApp: React.FC = () => {
                         >
                             更新日志
                         </button>
-                        <button
-                            onClick={() => { setTab('guide'); trackEvent('切换常见问题标签页', { tab: 'guide' }); }}
-                            className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all ${
-                                tab === 'guide'
-                                    ? 'bg-white text-indigo-600 shadow-sm'
-                                    : 'text-slate-500 active:scale-95'
-                            }`}
-                        >
-                            使用说明
+                        <button onClick={() => { if (tab !== 'support') trackEvent('打开 Sully-11', { 入口: '使用帮助' }); setTab('support'); }} aria-pressed={tab === 'support'}
+                            className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all ${tab === 'support' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 active:scale-95'}`}>
+                            问 Sully-11
                         </button>
                     </div>
                 </div>
             )}
 
             {/* Content area */}
+            <div className={tab === 'support' && !activeChangelog ? 'flex min-h-0 flex-1' : 'hidden'}>
+                <SullyHelpDesk knowledge={helpDeskKnowledge} />
+            </div>
             {activeChangelog ? (
                 <div className="flex-1 bg-[#faf7f2] overflow-hidden">
                     <iframe
@@ -736,7 +355,7 @@ const FAQApp: React.FC = () => {
                         className="w-full h-full border-0"
                     />
                 </div>
-            ) : tab === 'faq' ? (
+            ) : tab === 'support' ? null : tab === 'faq' ? (
                 <div className="flex-1 overflow-y-auto p-5 pb-20 no-scrollbar">
                     {/* Intro Banner */}
                     <div className="bg-gradient-to-r from-pink-100 to-indigo-100 p-5 rounded-3xl mb-6 shadow-sm">
@@ -781,7 +400,7 @@ const FAQApp: React.FC = () => {
                         SullyOS·糯米机 Help Center • v1.1
                     </div>
                 </div>
-            ) : tab === 'changelog' ? (
+            ) : (
                 <div className="flex-1 overflow-y-auto p-5 pb-20 no-scrollbar">
                     <div className="bg-gradient-to-r from-indigo-100 to-purple-100 p-5 rounded-3xl mb-6 shadow-sm">
                         <h2 className="text-lg font-bold text-slate-700 mb-2 flex items-center gap-2">
@@ -821,93 +440,6 @@ const FAQApp: React.FC = () => {
 
                     <div className="mt-8 text-center text-[10px] text-slate-400">
                         SullyOS·糯米机 Changelog • 更多版本将在这里陆续归档
-                    </div>
-                </div>
-            ) : (
-                <div className="flex-1 overflow-y-auto p-5 pb-20 no-scrollbar">
-                    {/* Intro Banner */}
-                    <div className="bg-gradient-to-r from-sky-100 to-indigo-100 p-5 rounded-3xl mb-6 shadow-sm">
-                        <h2 className="text-lg font-bold text-slate-700 mb-2 flex items-center gap-2">
-                            <img src="https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/1f4d6.png" className="w-5 h-5 inline" alt="" /> SullyOS 使用说明
-                        </h2>
-                        <p className="text-xs text-slate-600 leading-relaxed opacity-90">
-                            这里整理了目前系统里所有的 App：它是什么、怎么用、会关联到哪些 App。
-                            内容会随版本持续补充，欢迎按名字在桌面找对应的图标。
-                        </p>
-                    </div>
-
-                    {/* Guide Accordion List — 一行一个 App，点开展开详细说明 */}
-                    <div className="space-y-2">
-                        {GUIDE_DATA.map((item) => {
-                            const isOpen = expandedGuide === item.name;
-                            return (
-                                <div
-                                    key={item.name}
-                                    className={`bg-white rounded-2xl border shadow-sm overflow-hidden transition-colors ${
-                                        isOpen ? 'border-indigo-200' : 'border-slate-100'
-                                    }`}
-                                >
-                                    {/* 折叠行：图标 + 名字 + 展开箭头 */}
-                                    <button
-                                        onClick={() => {
-                                            setExpandedGuide(isOpen ? null : item.name);
-                                            trackEvent('展开使用说明', { app: item.name });
-                                        }}
-                                        className="w-full flex items-center gap-3 px-4 py-3.5 text-left active:bg-slate-50"
-                                    >
-                                        <div className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0 bg-gradient-to-br from-slate-50 to-slate-100 border border-slate-100">
-                                            <img src={item.icon} className="w-5 h-5" alt="" />
-                                        </div>
-                                        <h3 className={`text-sm font-bold flex-1 min-w-0 ${isOpen ? 'text-indigo-600' : 'text-slate-800'}`}>{item.name}</h3>
-                                        <svg
-                                            xmlns="http://www.w3.org/2000/svg"
-                                            fill="none"
-                                            viewBox="0 0 24 24"
-                                            strokeWidth={2}
-                                            stroke="currentColor"
-                                            className={`w-4 h-4 shrink-0 text-slate-400 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`}
-                                        >
-                                            <path strokeLinecap="round" strokeLinejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
-                                        </svg>
-                                    </button>
-
-                                    {/* 展开内容 */}
-                                    {isOpen && (
-                                        <div className="px-4 pb-4 animate-slide-up">
-                                            <div className="border-t border-slate-100 pt-3 space-y-3">
-                                                <p className="text-xs text-slate-600 leading-relaxed">{item.desc}</p>
-
-                                                {item.how.length > 0 && (
-                                                    <div className="bg-slate-50 rounded-lg p-3 space-y-1.5">
-                                                        {item.how.map((step, i) => (
-                                                            <div key={i} className="flex gap-2 items-start">
-                                                                <span className="text-xs font-bold text-indigo-500 shrink-0 mt-0.5">{i + 1}.</span>
-                                                                <p className="text-xs text-slate-700 leading-relaxed">{step}</p>
-                                                            </div>
-                                                        ))}
-                                                    </div>
-                                                )}
-
-                                                {item.links.length > 0 && (
-                                                    <div className="flex items-center gap-1.5 flex-wrap">
-                                                        <span className="text-[10px] font-bold text-slate-400 shrink-0">关联:</span>
-                                                        {item.links.map(link => (
-                                                            <span key={link} className="text-[10px] font-medium text-indigo-600 bg-indigo-50 border border-indigo-100 rounded-full px-2 py-0.5">
-                                                                {link}
-                                                            </span>
-                                                        ))}
-                                                    </div>
-                                                )}
-                                            </div>
-                                        </div>
-                                    )}
-                                </div>
-                            );
-                        })}
-                    </div>
-
-                    <div className="mt-8 text-center text-[10px] text-slate-400">
-                        SullyOS Guide • 使用说明会随新 App 陆续补充
                     </div>
                 </div>
             )}

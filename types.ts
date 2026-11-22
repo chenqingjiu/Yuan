@@ -44,12 +44,56 @@ export enum AppID {
   Weread = 'weread', // 微信读书 — 真实书架/笔记/正文（个人自用）+ 角色感知开关
 }
 
+export interface SystemLogContext {
+    /** 应用版本与构建标识，随单条日志导出便于定位构建版本 */
+    build?: string;
+    /** 请求所属功能分类，如 llm / embedding / vector-db / amsg2 / music / tts / backup / mcp 等 */
+    category?: string;
+    /** 失败细分形态：blocked / timeout / offline / mixed-content / bad-url / stream-interrupted / aborted / http-status / console-error / unknown */
+    failureKind?: string;
+    /** 具体子操作，如 提交即时对话 (/instant-chat)、PROPFIND、tools/call:search 等 */
+    operation?: string;
+    method?: string;
+    /** 已脱敏的请求 URL（不含中转令牌、密钥查询参数或账号口令） */
+    url?: string;
+    host?: string;
+    /** 转发通道：direct / proxy-worker / amsg-relay / mcp-proxy / same-origin */
+    via?: string;
+    /** 经由代理或中转时的实际目标上游域名 */
+    upstreamTarget?: string;
+    /** 命中的本地配置来源说明，如「对话 API（预设：OpenRouter）」 */
+    configSource?: string;
+    /** 请求体中的模型标识（仅模型类请求） */
+    model?: string;
+    httpStatus?: number;
+    durationMs?: number;
+    /** 响应头到达耗时（仅已收到响应头后在流式读取阶段中断时存在） */
+    headersMs?: number;
+    /** no-cors 连通性复检结果（异步回填） */
+    reachability?: string;
+    /** 归属信息来源：explicit = 调用点显式传入；ambient = 仅取发起时的前台界面快照 */
+    attributionMode?: 'explicit' | 'ambient';
+    appName?: string;
+    charName?: string;
+    purpose?: string;
+    /** 发起时 -> 失败时的页面可见性，如 visible -> hidden */
+    visibility?: string;
+    /** 请求在飞期间页面是否进入过后台/锁屏 */
+    backgroundedDuringRequest?: boolean;
+    /** 精简后的调用栈入口线索 */
+    caller?: string;
+}
+
 export interface SystemLog {
+    advice?: { title: string; action: string };
     id: string;
     timestamp: number;
+    /** 便于直接阅读的本地时间字符串（含时区偏移） */
+    time?: string;
     type: 'error' | 'network' | 'system';
     source: string;
     message: string;
+    context?: SystemLogContext;
     detail?: string;
 }
 
@@ -199,6 +243,8 @@ export interface OSTheme {
   chatBubbleStyle?: 'modern' | 'flat' | 'outline' | 'shadow' | 'wechat' | 'ios';
   chatMessageSpacing?: 'compact' | 'default' | 'spacious';
   chatShowTimestamp?: 'always' | 'hover' | 'never';
+  /** 消息组末气泡下方（默认）、可见头像正下方，或按 5 分钟分段在上方居中。 */
+  chatTimestampPosition?: 'below' | 'below_avatar' | 'top_center';
   chatHeaderStyle?: 'default' | 'minimal' | 'gradient' | 'wechat' | 'telegram' | 'discord' | 'pixel';
   chatInputStyle?: 'default' | 'rounded' | 'flat' | 'wechat' | 'ios' | 'telegram' | 'discord' | 'pixel';
   chatChromeStyle?: 'soft' | 'flat' | 'floating' | 'pixel';
@@ -213,6 +259,7 @@ export interface OSTheme {
    *  可换色 / 贴图 / 改外形 / 挪位；稳定选择器清单见 ChromeCssEditor。 */
   chatChromeCustomCss?: string;
   /** 心象外观的全局默认值；不包含显示开关或生成提示词。 */
+  chatProfileAppearance?: import('./utils/chatProfileAppearance').ChatProfileAppearance;
   chatPsyche?: import('./utils/psycheAppearance').PsycheAppearance;
   /** 全局默认「白框提示音」：某角色未单独设提示音时回落到这里。src 同角色版（内置 key / 音频直链 / data:audio）。 */
   chatSound?: { src: string; volume?: number };
@@ -312,6 +359,8 @@ export interface APIConfig {
   visionApi?: VisionApiConfig;
   // 可选视频理解：与识图同一家也能是不同家，切主 API 预设不会带走它。
   videoApi?: VideoApiConfig;
+  /** 心象手动翻译专用；全局共用，未配置时不自动调用对话 API。 */
+  thinkingTranslationApi?: DialogueApiConfig;
   minimaxApiKey?: string;
   minimaxGroupId?: string;
   // 'domestic' → https://api.minimaxi.com (国内站)
@@ -383,6 +432,11 @@ export type ActiveMsg2Mode = 'fixed' | 'auto' | 'prompted';
 export type ActiveMsg2Recurrence = 'none' | 'daily' | 'weekly';
 
 export interface ActiveMsg2GlobalConfig {
+  /**
+   * 全局总开关：false 时保留 Worker 地址、密钥与各角色配置，暂停本机一切向云端的请求与轮询；
+   * undefined / true 均为开启（兼容存量配置）。
+   */
+  enabled?: boolean;
   /** Confirmed by /config-check, scoped to the Worker URL that was checked. */
   anthropicMessagesSupported?: boolean;
   anthropicMessagesWorkerUrl?: string;
@@ -391,6 +445,10 @@ export interface ActiveMsg2GlobalConfig {
   workerUrl: string;
   /** 与 worker 约定的共享密钥；配了就每次请求带 X-Client-Token，缺/错 worker 返回 401 */
   serverToken?: string;
+  /** 请求经 SullyOS 中转服务器转发（设置里叫「大陆连接优化」），见 utils/amsgRelay.ts */
+  useRelay?: boolean;
+  /** 中转令牌，在 SullyOS 的 Discord 群里用 /中转令牌 领取。绑着 Discord 账号，只存在本机，不随默认备份导出 */
+  relayToken?: string;
   /**
    * 一键部署时生成的 AMSG_MASTER_KEY（worker 侧用它加密任务内容）。
    * 存在这里只为「重装时沿用同一把」——它一换，之前加密进 D1 的任务就全解不开了，
@@ -502,10 +560,17 @@ export interface ActiveMsg2TaskRecord {
   lastError?: string;
   /** 「离开后消息」的云端任务：每个角色最多一条，对方开口后往后推，见 docs/away-message.md。 */
   away?: boolean;
+  /** 「见面离开提醒」的云端任务：见面中途走开时建，回到见面或开口就取消，见 docs/date-leave-reminder.md。 */
+  dateLeave?: boolean;
 }
 
 export interface ActiveMsg2CharacterConfig {
   enabled: boolean;
+  /**
+   * 角色关闭「聊天 · 时间感知强化」（timeAwarenessEnabled === false）时，用户是否已明确确认
+   * 接受现实定时与架空剧情时间可能错乱、仍要开启主动消息 2.0。关闭 2.0 或恢复时间感知时清除。
+   */
+  allowWithoutTimeAwareness?: boolean;
   /**
    * 即时对话按角色单独关。undefined = 跟随全局（全局即时对话开着就默认开）；
    * false = 这个角色的聊天回到本地前台生成。与 enabled（排程开关）互相独立：
@@ -619,7 +684,9 @@ export interface RealtimeConfig {
     userHolidays?: import('./utils/userHolidays').UserHolidayConfig;
   // 天气配置
   weatherEnabled: boolean;
-  weatherApiKey: string;  // OpenWeatherMap API Key（可选；留空走免 key 的 Open-Meteo）
+  weatherApiKey: string;  // OpenWeatherMap API Key（可选；留空走所选免费源）
+  weatherFreeSourceMigration?: 1;
+  weatherFreeSource?: import('./utils/weatherSources').FreeWeatherSource;
   weatherCities?: Record<string, string>; // Per-character override; missing/blank inherits weatherCity.
     weatherCity: string;    // 城市名（如 "北京"、"Beijing"）
 
@@ -2474,6 +2541,25 @@ export interface DateState {
     peekStatus: string;
     /** 当前批次解析出的观测数据（开了 OBSERVE 才有），用于恢复会话时回填 HUD */
     observation?: DateObservation;
+    /** 挂起那一刻最后一条 AI 回复的正文：恢复后据此判断离开期间有没有新回复要接着播。 */
+    lastAssistantContent?: string;
+    /** 还停在开场白上（用户没开过口）：恢复后照旧不给开场白配音。 */
+    showingOpening?: boolean;
+    /** 没发出去的输入框草稿。 */
+    draftInput?: string;
+}
+
+/** 见面对话中途走开时挂起的见面，只存在内存里（见 docs/date-leave-reminder.md）。 */
+export interface SuspendedDate {
+    charId: string;
+    charName: string;
+    encounterId: string;
+    peekStatus: string;
+    cameFromChat: boolean;
+    state: DateState | null;
+    suspendedAt: number;
+    /** 切走时还没回来的那次回复；恢复后据此显示「正在输入」，落定后刷新记录。 */
+    pendingTurn?: Promise<unknown>;
 }
 
 // ─── 见面 · 剧情剧场 ────────────────────────────────────────────────
@@ -3004,6 +3090,8 @@ export interface MemoryPalaceWaterlineConfig {
 }
 
 export interface CharacterProfile {
+  /** Include sent stickers in private dialogue as pictures or vision descriptions. */
+  stickerVision?: boolean;
   userPersona?: import('./utils/userPersona').CharacterUserPersona;
   /** Local default for this character's dialogue; absent means follow Settings. Never shared in cards. */
   dialogueApi?: DialogueApiConfig;
@@ -3179,6 +3267,8 @@ export interface CharacterProfile {
   memories: MemoryFragment[];
   refinedMemories?: Record<string, string>;
   activeMemoryMonths?: string[];
+  /** 允许角色自主查阅指定月份的详细记忆，默认开启；关闭同时禁止提示与执行。 */
+  monthlyRecallEnabled?: boolean;
   /** 默认隐藏 ChatApp 的按月 RECALL 指令提示；false 恢复提示，不禁用指令解析。 */
   hideMonthlyRecallPrompt?: boolean;
   
@@ -3199,6 +3289,10 @@ export interface CharacterProfile {
   /** ChatApp visual fields only; filtered through the decoration allowlist. */
   chatAppearance?: Partial<OSTheme>;
   chatDecorationCssIsolated?: boolean;
+  /** Parts this character has selected independently of the global chat whitebox. */
+  chatIndependentParts?: import('./utils/whiteboxParts').WhiteboxPart[];
+  /** Explicitly followed components inside an otherwise isolated outfit. */
+  chatFollowWhiteboxParts?: import('./utils/whiteboxParts').WhiteboxPart[];
   chatBackground?: string;
   contextLimit?: number;
   /**
@@ -3228,6 +3322,7 @@ export interface CharacterProfile {
   spriteConfig?: SpriteConfig;
   customDateSprites?: string[]; // User-added custom emotion names for date mode (per-character)
   dateLightReading?: boolean;   // Light reading mode for novel/text view in date
+  chatProfileAppearance?: import('./utils/chatProfileAppearance').ChatProfileAppearance;
   dateAppearance?: import('./utils/meetingAppearance').MeetingAppearance;
   dateReadingShowAvatars?: boolean; // Show both participants' avatars beside messages in date reading mode
   dateSkinSets?: SkinSet[];     // Multiple skin sets for portrait mode
@@ -3364,6 +3459,8 @@ export interface CharacterProfile {
    * 开着主动消息 2.0 的角色走云端推送，其余在下次打开页面时本地补上。
    */
   awayMessage?: { enabled: boolean; delayMinutes?: number };
+  /** 见面离开提醒：见面对话中走开多久，角色在私聊里找对方（见 docs/date-leave-reminder.md）。 */
+  dateLeaveReminder?: { enabled: boolean; delayMinutes?: number };
   activeBuffs?: CharacterBuff[];
   buffInjection?: string;   // 注入到systemPrompt的叙事型情绪底色描述
   /**
@@ -3488,8 +3585,10 @@ export interface CharacterProfile {
     accent?: string;   // 边框/标题点缀
     text?: string;     // 正文颜色
   };
-  /** 用户追加的思考提示词（不替换原生，只在最后追加一段「用户额外要求」） */
+  /** 角色自定义心象提示词。未设置模式的角色默认追加。 */
   thinkingChainCustomPrompt?: string;
+  thinkingChainPromptMode?: 'append' | 'replace';
+  thinkingChainPromptScope?: 'space' | 'character';
   /**
    * 心象卡片的自定义 CSS（叠加在任意风格之上，机制同气泡工坊 customCss）。
    * 选择器限定以 .sully-psyche 开头（子元素类：-card / -title / -preview / -body），
@@ -3584,6 +3683,8 @@ export interface CharacterExportData extends Omit<CharacterProfile, 'id' | 'memo
 }
 
 export interface UserProfile {
+    /** 这个用户空间中，跟随共用设置的角色使用的心象提示词。 */
+    thinkingChainPrompt?: { mode?: 'append' | 'replace'; customPrompt?: string };
     wardrobeOutfits?: import('./apps/room3d/chibi/outfitLibrary').SavedOutfit[];
     chibiStudio?: { home3D?: HomeFigureSlot };
     name: string;
@@ -4190,7 +4291,7 @@ export interface GameSession {
     lastPlayedAt: number;
 }
 
-export type MessageType = 'friend_feed_share_card' | 'friend_feed_card' | 'secret_note' | 'text' | 'image' | 'video' | 'emoji' | 'voice' | 'collaboration_file' | 'interaction' | 'transfer' | 'system' | 'social_card' | 'chat_forward' | 'xhs_card' | 'score_card' | 'music_card' | 'mcd_card' | 'luckin_card' | 'html_card' | 'news_card' | 'vr_card' | 'trpg_card' | 'novel_card' | 'world_card' | 'sim_card' | 'phone_card' | 'webpage_card' | 'theater_card' | 'room_card' | 'life_card' | 'group_topic_card' | 'fanwai_card' | 'location_card' | 'game_replay' | 'letter_card' | 'letter_reply_card';
+export type MessageType = 'friend_feed_share_card' | 'friend_feed_card' | 'sully_help_card' | 'secret_note' | 'text' | 'image' | 'video' | 'emoji' | 'voice' | 'collaboration_file' | 'interaction' | 'transfer' | 'system' | 'social_card' | 'chat_forward' | 'xhs_card' | 'score_card' | 'music_card' | 'mcd_card' | 'luckin_card' | 'html_card' | 'news_card' | 'vr_card' | 'trpg_card' | 'novel_card' | 'world_card' | 'sim_card' | 'phone_card' | 'webpage_card' | 'theater_card' | 'room_card' | 'life_card' | 'group_topic_card' | 'fanwai_card' | 'location_card' | 'game_replay' | 'letter_card' | 'letter_reply_card';
 
 export interface Message {
     id: number;
@@ -4213,6 +4314,7 @@ export interface Message {
 }
 
 export interface EmojiCategory {
+    personalOnly?: boolean;
     id: string;
     name: string;
     isSystem?: boolean;
@@ -4220,6 +4322,10 @@ export interface EmojiCategory {
 }
 
 export interface Emoji {
+    /** Original link retained when a personal backup replaces a cached URL with a local blob. */
+    backupSourceUrl?: string;
+    contentHash?: string;
+    builtIn?: boolean;
     name: string;
     url: string;
     categoryId?: string; 
@@ -4232,6 +4338,7 @@ export interface FullBackupData {
     friendFeedMedia?: import('./utils/activityBackup').FriendFeedMediaBackup;
     /** Text records stored in assets; restore only this allowlisted subset. */
     activityTextAssets?: import('./utils/activityBackup').ActivityTextAsset[];
+    helpDeskHistory?: import('./utils/sullyHelpHistory').HelpRecord[];
     /** 纯文字备份单独携带收藏索引，不覆盖整个资源库。 */
     contentFavoritesIndex?: unknown;
     timestamp: number;
@@ -4247,6 +4354,8 @@ export interface FullBackupData {
      * 的 exportAmsg2GlobalConfig）。角色身上那份 activeMsg2Config 跟着 characters 走。
      */
     amsg2GlobalConfig?: ActiveMsg2GlobalConfig;
+    /** Personal backup: saved provider/keys, hidden regions and this user's audience; never live coordinates. */
+    userLocationSettings?: import('./utils/userLocationPrivacy').UserLocationConfig;
     apiPresets?: ApiPreset[];
     availableModels?: string[];
     realtimeConfig?: RealtimeConfig;  // 实时感知配置（天气/新闻/Notion）
@@ -4421,6 +4530,8 @@ export interface FullBackupData {
     chatTranslateTargetLangByChar?: Record<string, string>;
     chatTranslateEnabledByChar?: Record<string, boolean>;
     chatTranslateExpandedByChar?: Record<string, boolean>;
+    chatTranslateStyleByChar?: Record<string, 'bubble' | 'subtitle'>;
+    chatSubtitleByChar?: Record<string, import('./utils/chatTranslationStyle').ChatSubtitleSettings>;
     chatArchivePrompts?: any;
     chatActiveArchivePromptId?: string;
     characterRefinePrompts?: any;
@@ -4492,6 +4603,8 @@ export interface CloudBackupFile {
     statusMessage?: string;
     /** Expected GitHub asset sizes, in the same order as the ids encoded in href. */
     partSizes?: number[];
+    /** GitHub asset digests (`sha256:…`), same order as partSizes; missing where GitHub reports none. */
+    partDigests?: (string | undefined)[];
 }
 
 // --- GUIDEBOOK (攻略本) APP TYPES ---

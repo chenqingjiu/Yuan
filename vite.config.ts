@@ -1,8 +1,6 @@
-import { defineConfig, type Plugin, type ProxyOptions } from 'vite';
+import { defineConfig, type ProxyOptions } from 'vite';
 import react from '@vitejs/plugin-react';
 import { execSync } from 'node:child_process';
-import { writeFileSync, mkdirSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
 import { bakeVoiceMiddleware } from './server/bake-voice-middleware';
 import { staticCachePlugin } from './scripts/static-cache-build';
 import { homeResourcePacksPlugin } from './scripts/home-resource-packs.mjs';
@@ -37,26 +35,6 @@ const routeMinimaxByRegion: ProxyOptions['configure'] = (proxy) => {
 //   - VITE_SHOW_BUILD_BADGE=1 强制显示（在 master 本地调试用）
 const RELEASE_BRANCHES = new Set(['main', 'master']);
 const UTC8_OFFSET_MS = 8 * 60 * 60 * 1000;
-
-// 构建完成后把版本信息写到 dist/version.json，供「检查更新」拉取线上最新版本对比。
-function emitVersionJson(gitInfo: { branch: string; commit: string }, buildTime: string): Plugin {
-  return {
-    name: 'emit-version-json',
-    apply: 'build',
-    writeBundle() {
-      const payload = {
-        branch: gitInfo.branch,
-        commit: gitInfo.commit,
-        label: `${gitInfo.branch}@${gitInfo.commit}`,
-        time: buildTime,
-      };
-      const outDir = 'dist';
-      const file = resolve(outDir, 'version.json');
-      mkdirSync(dirname(file), { recursive: true });
-      writeFileSync(file, JSON.stringify(payload, null, 2), 'utf8');
-    },
-  };
-}
 
 function formatBuildTimeUtc8(date = new Date()): string {
   const utc8Date = new Date(date.getTime() + UTC8_OFFSET_MS);
@@ -113,7 +91,6 @@ export default defineConfig({
     startupRecoveryPlugin(appBuildId),
     pageBuildMetadataPlugin({ buildId: appBuildId, branch: gitInfo.branch, commit: gitInfo.commit, time: buildTime }),
     react(),
-    emitVersionJson(gitInfo, buildTime),
     staticCachePlugin({ buildId: appBuildId, appVersion: APP_VERSION_TAG }),
     {
       name: 'bake-voice-middleware',
@@ -234,6 +211,8 @@ export default defineConfig({
             if (/[\\/]node_modules[\\/]animal-island-ui[\\/]/.test(id)) return 'vendor-island';
             if (/[\\/]node_modules[\\/]ag-psd[\\/]/.test(id)) return 'vendor-psd';
             if (/[\\/]node_modules[\\/]pdfjs-dist[\\/]/.test(id)) return 'vendor-pdf';
+            // Pure-JS gzip fallback is loaded on demand only when native CompressionStream is unavailable or produces incomplete output.
+            if (/[\\/]node_modules[\\/]fflate[\\/]/.test(id)) return 'vendor-fflate';
             // BVH imports Three: leaving it in common vendor pulls the 3D engine
             // back into desktop startup, even when application imports are lazy.
             // VRM/Three 用于按需打开的 3D 小屋及通话。单独成包，避免 3D 引擎

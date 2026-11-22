@@ -496,10 +496,6 @@ const Appearance: React.FC = () => {
   const [wallpaperUrl, setWallpaperUrl] = useState('');
   const lockWallpaperInputRef = useRef<HTMLInputElement>(null);
   const [lockWallpaperUrl, setLockWallpaperUrl] = useState('');
-  const messageWallpaperInputRef = useRef<HTMLInputElement>(null);
-  const [messageWallpaperUrl, setMessageWallpaperUrl] = useState('');
-  // 预览需把 blobref 令牌解析成 objectURL，否则 url("blobref:...") 报 ERR_UNKNOWN_URL_SCHEME、预览空白。
-  const resolvedMessageWallpaper = useBlobRefUrl(theme.messageWallpaper || undefined);
   const widgetInputRef = useRef<HTMLInputElement>(null);
   const [activeWidgetSlot, setActiveWidgetSlot] = useState<string | null>(null);
   const iconInputRef = useRef<HTMLInputElement>(null);
@@ -750,30 +746,6 @@ const Appearance: React.FC = () => {
       addToast('锁屏壁纸已应用', 'success');
   };
 
-  const handleMessageWallpaperUpload = async (file: File) => {
-      try {
-          addToast('正在处理消息列表壁纸 (原画质)...', 'info');
-          const blob = await processImageToBlob(file, { skipCompression: true });
-          const ref = await putImageBlob(blob);
-          await updateTheme({ messageWallpaper: ref });
-          addToast('消息列表壁纸更新成功', 'success');
-      } catch (e: any) {
-          addToast(e.message, 'error');
-      }
-  };
-
-  const applyMessageWallpaperUrl = async () => {
-      const url = messageWallpaperUrl.trim();
-      if (!url) return;
-      if (!/^https?:\/\//i.test(url) && !url.startsWith('data:') && !url.startsWith('blob:')) {
-          addToast('请填写以 http(s):// 开头的图片地址', 'error');
-          return;
-      }
-      await updateTheme({ messageWallpaper: url });
-      setMessageWallpaperUrl('');
-      addToast('消息列表壁纸已应用', 'success');
-  };
-
   const handleWidgetUpload = async (file: File) => {
       if (!activeWidgetSlot) return;
       try {
@@ -812,6 +784,8 @@ const Appearance: React.FC = () => {
       reader.onload = async (ev) => {
           try {
               const dataUrl = ev.target?.result as string;
+              const { rememberFontDataUrl } = await import('../utils/fontLibrary');
+              await rememberFontDataUrl(dataUrl, file.name.replace(/\.[^.]+$/, ''));
               updateTheme({ customFont: dataUrl });
               addToast('系统字体已更新', 'success');
           } catch(err) {
@@ -1421,67 +1395,6 @@ const Appearance: React.FC = () => {
                         </button>
                     </div>
                 <BootAnimationSettings theme={theme} updateTheme={updateTheme} />
-                </section>
-
-                {/* Message 列表壁纸 Section */}
-                <section className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100">
-                    <h2 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-1">消息列表壁纸</h2>
-                    <p className="text-[10px] text-slate-400 mb-4">Message 会话列表页的背景图，单独设置不改变聊天窗口。</p>
-                    <LongPressArea
-                        className="aspect-[3/4] w-2/3 mx-auto bg-slate-100 rounded-2xl overflow-hidden relative shadow-inner mb-4 group cursor-pointer"
-                        onClick={() => messageWallpaperInputRef.current?.click()}
-                        onLongPress={async () => {
-                            if (!theme.messageWallpaper) {
-                                addToast('消息列表当前没有背景图', 'info');
-                                return;
-                            }
-                            await updateTheme({ messageWallpaper: undefined });
-                            addToast('已移除消息列表壁纸', 'success');
-                        }}
-                    >
-                        <div
-                            className="w-full h-full"
-                            style={{
-                                background: !theme.messageWallpaper
-                                    ? '#e2e8f0'
-                                    : (theme.messageWallpaper.startsWith('linear-gradient') || theme.messageWallpaper.startsWith('radial-gradient') || theme.messageWallpaper.startsWith('conic-gradient'))
-                                        ? theme.messageWallpaper
-                                        : `url("${resolvedMessageWallpaper || theme.messageWallpaper}") center/cover`,
-                            }}
-                        />
-                        <div className="absolute inset-0 bg-black/30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                            <span className="text-white text-xs font-bold bg-black/20 px-3 py-1 rounded-full backdrop-blur-md">更换壁纸</span>
-                        </div>
-                    </LongPressArea>
-                    <input
-                        type="file"
-                        ref={messageWallpaperInputRef}
-                        className="hidden"
-                        accept="image/*"
-                        onChange={(e) => {
-                            if (e.target.files?.[0]) handleMessageWallpaperUpload(e.target.files[0]);
-                            e.target.value = '';
-                        }}
-                    />
-                    <p className="text-center text-[10px] text-slate-400 mb-4">点击上传 / 长按移除背景</p>
-
-                    <div className="border-t border-slate-100 pt-4 space-y-2">
-                        <p className="text-[11px] font-bold text-slate-500">从 URL 导入</p>
-                        <input
-                            value={messageWallpaperUrl}
-                            onChange={e => setMessageWallpaperUrl(e.target.value)}
-                            onKeyDown={e => { if (e.key === 'Enter') applyMessageWallpaperUrl(); }}
-                            placeholder="输入图片地址 (https://...)"
-                            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-xs outline-none focus:border-primary transition-all"
-                        />
-                        <button
-                            onClick={applyMessageWallpaperUrl}
-                            disabled={!messageWallpaperUrl.trim()}
-                            className="w-full py-2 bg-primary text-white font-bold text-xs rounded-xl shadow-md active:scale-95 transition-transform disabled:opacity-40 disabled:active:scale-100"
-                        >
-                            应用网络消息列表壁纸
-                        </button>
-                    </div>
                 </section>
 
                 {/* Page 1 Desktop Square Image */}

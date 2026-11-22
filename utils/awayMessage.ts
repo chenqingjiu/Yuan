@@ -13,6 +13,7 @@ import { isAmsg2GlobalReady } from './amsg2ToolBridge';
 import {
   decideAwayTaskAction,
   findAwayGapStart,
+  getLastAwayAnchorAt,
   planAwaySlots,
   resolveAwayDelayMinutes,
   splitAwaySegments,
@@ -127,10 +128,29 @@ export const syncCloudAwayTask = async (deps: {
   }
 };
 
+/**
+ * 见面与通话轮次落库后维护云端离开后消息：从最近消息（含已归档）取最后一次在场互动时刻，
+ * 按它新建或改期云端任务。距离已有排期不到 AWAY_RENEW_SLACK_MS（10 分钟）时不发请求。
+ */
+export const syncCloudAwayTaskFromRecent = async (
+  deps: Omit<Parameters<typeof syncCloudAwayTask>[0], 'lastUserAt'>,
+): Promise<void> => {
+  const { char } = deps;
+  if (!char.awayMessage?.enabled || cloudInFlight.has(char.id)) return;
+  if ((cloudCooldownUntil.get(char.id) ?? 0) > Date.now()) return;
+  if (!await isAwayCloudRoute(char) || !char.activeMsg2Config) return;
+  const recent = await DB.getRecentMessagesByCharId(char.id, 50, true);
+  const lastAnchorAt = getLastAwayAnchorAt(recent);
+  if (lastAnchorAt == null) return;
+  await syncCloudAwayTask({ ...deps, lastUserAt: lastAnchorAt });
+};
+
 /** 关掉离开后消息或改了等待时长时调用：取消云端那条，下一轮对方开口时按新设置重建。 */
 export const cancelCloudAwayTasks = async (char: CharacterProfile, updateCharacter: UpdateCharacter): Promise<void> => {
   const away = (char.activeMsg2Config?.tasks ?? []).filter(t => t.away);
   if (!away.length) return;
+  // 总开关关闭期间不打 Worker：记录留在本地清单，待恢复开启或重开设置时再同步取消。
+  if (!await isAmsg2GlobalReady()) return;
   const cancelled = new Set<string>();
   for (const task of away) {
     try {
@@ -190,18 +210,56 @@ const generateLocalAwayMessages = async (char: CharacterProfile, deps: LocalAway
   const lastUserAt = findAwayGapStart(recent, delayMs, now);
   if (lastUserAt == null) return;
   const userProfile = deps.getUserProfile();
-  const api = resolveDialogueApi(deps.getApiConfig(), char);
-  if (!userProfile || !api.baseUrl) return;
+  if (!userProfile) return;
 
   // 时刻不早于最后一条消息：显示顺序看 id，时间戳倒挂会让气泡上的钟跳回去。
   const lastMsgAt = recent.at(-1)?.timestamp ?? lastUserAt;
   const slots = planAwaySlots(lastUserAt, delayMs, now).map(t => Math.max(t, lastMsgAt + 1));
   const userName = userProfile.name || '对方';
 
+  await runLocalProactiveTurn(char, {
+    apiConfig: deps.getApiConfig(),
+    userProfile,
+    groups: deps.getGroups(),
+    realtimeConfig: deps.getRealtimeConfig(),
+    hint: buildLocalAwayHint(char, userName, lastUserAt, slots, recent, now),
+    purpose: '离开后消息',
+    // 打标是「这段离开已经补过」的唯一依据，见 findAwayGapStart。
+    meta: { awayMessage: true },
+    place: text => splitAwaySegments(text, slots.length).map((segment, i) => ({ text: segment, at: slots[i] })),
+    // 生成期间对方回来说了话：这段离开已经结束，补的消息作废。
+    stillWanted: async () =>
+      findAwayGapStart(await DB.getRecentMessagesByCharId(char.id, 50, true), delayMs, Date.now()) === lastUserAt,
+  });
+};
+
+// ─── 本地生成一轮角色主动找人的私聊（离开后消息、见面离开提醒共用） ───
+
+export interface LocalProactiveTurn {
+  apiConfig: APIConfig;
+  userProfile: UserProfile;
+  groups: GroupProfile[];
+  realtimeConfig: RealtimeConfig;
+  /** 本轮提示：只进这次请求，不落库。 */
+  hint: string;
+  /** 调用记录里的用途名。 */
+  purpose: string;
+  /** 落库消息带的标记。 */
+  meta: Record<string, unknown>;
+  /** 把模型正文切成几次发送，并给每次一个时刻。 */
+  place: (text: string) => { text: string; at: number }[];
+  /** 生成完、落库前再确认一次还要不要发；情况变了返回 false，整轮作废。 */
+  stillWanted: () => Promise<boolean>;
+}
+
+/** 用聊天同一套上下文生成并落库，返回有没有真的发出去。 */
+export const runLocalProactiveTurn = async (char: CharacterProfile, turn: LocalProactiveTurn): Promise<boolean> => {
+  const api = resolveDialogueApi(turn.apiConfig, char);
+  if (!api.baseUrl) return false;
+  const { userProfile, groups, realtimeConfig } = turn;
+
   const range = await loadCharacterContextRange(char);
   const { emojis, categories } = ChatPrompts.filterVisibleEmojis(await DB.getEmojis(), await DB.getEmojiCategories(), char.id);
-  const groups = deps.getGroups();
-  const realtimeConfig = deps.getRealtimeConfig();
   const payload = await buildChatRequestPayload({
     char, userProfile, groups, emojis, categories,
     historyMsgs: range.messages,
@@ -210,13 +268,13 @@ const generateLocalAwayMessages = async (char: CharacterProfile, deps: LocalAway
     realtimeConfig,
     musicSnapshot: loadMusicPlaybackSnapshot(),
     htmlMode: { enabled: !!(char as any).htmlModeEnabled, customPrompt: (char as any).htmlModeCustomPrompt },
-    visionApiConfig: deps.getApiConfig().visionApi,
+    visionApiConfig: turn.apiConfig.visionApi,
   });
 
   // 在所有原文范围筛选之后注入本轮任务；负数假 ID 会被水位线、窗口或用户断点滤掉。
   // 只加到 API 请求，不落库、不占历史条数，也不让范围外原文混入。保留末尾的人格提示。
   payload.fullMessages.splice(payload.volatileTailIndex >= 0 ? payload.volatileTailIndex : payload.fullMessages.length, 0, {
-    role: 'user', content: buildLocalAwayHint(char, userName, lastUserAt, slots, recent, now),
+    role: 'user', content: turn.hint,
   });
 
   const baseUrl = api.baseUrl.replace(/\/+$/, '');
@@ -224,24 +282,20 @@ const generateLocalAwayMessages = async (char: CharacterProfile, deps: LocalAway
   const data = await safeFetchJson(`${baseUrl}/chat/completions`, {
     method: 'POST', headers,
     body: JSON.stringify({ model: api.model, messages: payload.fullMessages, temperature: api.temperature ?? 0.85, stream: false }),
-  }, 2, 0, { appName: '消息', charId: char.id, charName: char.name, purpose: '离开后消息' });
-  const segments = splitAwaySegments(extractContent(data), slots.length);
-  if (!segments.length) return;
-
-  // 生成期间对方回来说了话：这段离开已经结束，补的消息作废。
-  if (findAwayGapStart(await DB.getRecentMessagesByCharId(char.id, 50, true), delayMs, Date.now()) !== lastUserAt) return;
+  }, 2, 0, { appName: '消息', charId: char.id, charName: char.name, purpose: turn.purpose });
+  const placed = turn.place(extractContent(data)).filter(p => p.text.trim());
+  if (!placed.length || !await turn.stillWanted()) return false;
 
   const notifyProgress = () => window.dispatchEvent(new CustomEvent('active-msg-progress'));
-  for (let i = 0; i < segments.length; i++) {
-    await applyAssistantPostProcessing(segments[i], {
+  for (const { text, at } of placed) {
+    await applyAssistantPostProcessing(text, {
       char, userProfile, emojis, categories, realtimeConfig, groups,
-      spokenAt: slots[i],
+      spokenAt: at,
       contextMsgs: range.messages,
       fullMessages: [],
       initialData: null,
       historyMsgCount: range.messages.length,
-      // 打标是「这段离开已经补过」的唯一依据，见 findAwayGapStart。
-      mcdInheritMeta: { awayMessage: true },
+      mcdInheritMeta: turn.meta,
       xhsCaches: {
         xsecTokenCache: new Map(), noteTitleCache: new Map(), commentUserIdCache: new Map(),
         commentAuthorNameCache: new Map(), commentParentIdCache: new Map(),
@@ -250,12 +304,13 @@ const generateLocalAwayMessages = async (char: CharacterProfile, deps: LocalAway
       hooks: { setMessages: notifyProgress, addToast: () => {} },
       instantRender: true,
       skipSecondPassLLM: true,
-      messageTimestamp: slots[i],
+      messageTimestamp: at,
     });
   }
-  const preview = segments.join(' ').replace(/\s+/g, ' ').trim().slice(0, 120);
+  const preview = placed.map(p => p.text).join(' ').replace(/\s+/g, ' ').trim().slice(0, 120);
   // 未读、提示和系统通知沿用主动消息送达那一套。
   window.dispatchEvent(new CustomEvent('active-msg-received', {
     detail: { charId: char.id, charName: char.name, body: preview },
   }));
+  return true;
 };

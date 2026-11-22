@@ -6,7 +6,6 @@ import AppIcon from '../components/os/AppIcon';
 import TokenImg from '../components/os/TokenImg';
 import { useBlobRefUrl } from '../utils/blobRef';
 import { DB } from '../utils/db';
-import { processImage } from '../utils/file';
 import { isChatPreviewMessage, chatPreviewText } from '../utils/chatMessageVisibility';
 import { CharacterProfile, Anniversary, AppID, DailySchedule } from '../types';
 import { ScheduleHomeWidget, ScheduleFullscreenViewer } from '../components/schedule/ScheduleHomeWidget';
@@ -299,93 +298,6 @@ const AppQuadGrid = React.memo(({ apps, openApp, editing = false }: { apps: type
     );
 });
 
-// 3c2. 相伴天数计算：算出自开始日期至今「相伴 N 天」（含今天）；无起始日期返回 null。
-const calcCompanionDays = (startDate?: string): number | null => {
-    if (!startDate) return null;
-    const t = new Date(startDate + 'T00:00:00').getTime();
-    if (isNaN(t)) return null;
-    return Math.max(1, Math.floor((Date.now() - t) / 86400000) + 1);
-};
-
-// 3c3. 右下角「纪念日」小组件：显示选定的角色名 + 相伴 N 天；点击弹设置弹窗。
-const DesktopAnniversaryWidget = React.memo(({
-    contentColor,
-    acnh = false,
-    char,
-    bgImage,
-    onOpenSettings,
-}: {
-    contentColor: string;
-    acnh?: boolean;
-    char?: CharacterProfile | null;
-    bgImage?: string;
-    onOpenSettings: () => void;
-}) => {
-    const { theme } = useOS();
-    // bgImage 可能是 blobref:<id> 本地令牌，CSS url() 不识别须先解析成 objectURL，否则报 ERR_UNKNOWN_URL_SCHEME。
-    const resolvedBgImage = useBlobRefUrl(bgImage);
-    const paper = theme.skin !== 'animalcrossing' && theme.skin !== 'mobilegame' && theme.skin !== 'tamagotchi' && isPaperWallpaper(theme.wallpaper);
-    const days = calcCompanionDays(char?.relationshipStartDate);
-    return (
-        <div
-            onClick={onOpenSettings}
-            className="relative w-full h-full rounded-[1.75rem] overflow-hidden cursor-pointer animate-fade-in transition-transform active:scale-[0.98]"
-            style={paper ? {
-                background: 'rgba(224,221,215,0.38)',
-                border: '1px solid rgba(91,72,51,0.07)',
-                boxShadow: '0 5px 16px rgba(91,72,51,0.055)',
-                color: contentColor,
-            } : acnh ? {
-                background: 'rgb(247,243,223)',
-                border: '2px solid #e8e2d6',
-                boxShadow: '0 6px 18px rgba(61,52,40,0.12)',
-                color: contentColor,
-            } : {
-                background: 'rgba(255,255,255,0.28)',
-                border: '1px solid rgba(255,255,255,0.18)',
-                boxShadow: '0 8px 30px rgba(0,0,0,0.22), inset 0 1px 0 rgba(255,255,255,0.07)',
-                color: contentColor,
-            }}
-        >
-            {bgImage && (
-                <>
-                    <div className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: `url(${resolvedBgImage || bgImage})` }} />
-                    <div className="absolute inset-0" style={{ background: paper ? 'rgba(224,221,215,0.45)' : acnh ? 'rgba(247,243,223,0.45)' : 'rgba(255,255,255,0.18)' }} />
-                </>
-            )}
-            <div className="absolute inset-0 px-3">
-                {char?.avatar ? (
-                    <TokenImg value={char.avatar} alt="" className="absolute top-3 left-1/2 -translate-x-1/2 w-9 h-9 rounded-full object-cover"
-                        style={{ background: paper ? 'rgba(120,131,105,0.10)' : 'rgba(255,255,255,0.1)', border: paper ? '1px solid rgba(91,72,51,0.12)' : '1px solid rgba(255,255,255,0.16)' }} />
-                ) : (
-                    <div className="absolute top-3 left-1/2 -translate-x-1/2 w-9 h-9 rounded-full flex items-center justify-center"
-                        style={{ background: paper ? 'rgba(120,131,105,0.10)' : 'rgba(255,255,255,0.1)', border: paper ? '1px solid rgba(91,72,51,0.12)' : '1px solid rgba(255,255,255,0.16)' }}>
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="currentColor" viewBox="0 0 24 24" className="w-5 h-5 opacity-70" style={{ color: paper ? '#68725b' : '#f87171' }}>
-                            <path d="M12 21s-7.5-4.5-9.5-9.5C.7 7.7 3 4 6.5 4c2 0 3.5 1 5.5 3 2-2 3.5-3 5.5-3 3.5 0 5.8 3.7 4 7.5C19.5 16.5 12 21 12 21z" />
-                        </svg>
-                    </div>
-                )}
-                {days !== null ? (
-                    <>
-                        <div className="absolute left-0 right-0 top-1/2 -translate-y-1/2 text-center">
-                            <span className="text-[48px] font-black leading-none" style={{ opacity: 0.92 }}>{days}</span>
-                            <span className="text-[22px] font-bold"> 天</span>
-                        </div>
-                        <div className="absolute bottom-2.5 left-0 right-0 text-center truncate px-3 text-[13px] font-bold tracking-[0.18em] opacity-55">{char?.name || 'TA'} · 相伴</div>
-                    </>
-                ) : (
-                    <>
-                        <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-center w-full">
-                            <div className="text-[11px] uppercase font-bold tracking-[0.22em] opacity-55">Anniversary</div>
-                            <div className="text-[10px] opacity-40 leading-tight">点此设置纪念日</div>
-                        </div>
-                    </>
-                )}
-            </div>
-        </div>
-    );
-});
-
 // 3c. Square image slot for pinwheel (bottom-right)
 const DesktopSquareImage = React.memo(({ image, contentColor, onClick, acnh = false }: {
     image?: string,
@@ -570,7 +482,7 @@ let _lastPageIndex = 0;
 // --- Main Launcher ---
 
 const Launcher: React.FC<{ staticPreview?: boolean }> = ({ staticPreview = false }) => {
-  const { openApp, characters, activeCharacterId, theme, updateTheme, updateCharacter, lastMsgTimestamp, isDataLoaded, unreadMessages } = useOS();
+  const { openApp, characters, activeCharacterId, theme, updateTheme, lastMsgTimestamp, isDataLoaded, unreadMessages } = useOS();
 
   // Local state for widget data to prevent context trashing
   const [widgetChar, setWidgetChar] = useState<CharacterProfile | null>(staticPreview ? characters[0] || null : null);
@@ -579,9 +491,6 @@ const Launcher: React.FC<{ staticPreview?: boolean }> = ({ staticPreview = false
   const [scheduleData, setScheduleData] = useState<DailySchedule | null>(null);
   const [scheduleCharId, setScheduleCharId] = useState<string | null>(null);
   const [scheduleViewerOpen, setScheduleViewerOpen] = useState(false);
-  // 右下角纪念日：选定的角色 id + 设置弹窗开关。dsqMode 存 theme.launcherDsqMode。
-  const [dsqCharId, setDsqCharId] = useState<string | null>(null);
-  const [dsqSettingsOpen, setDsqSettingsOpen] = useState(false);
   const [layoutEditing, setLayoutEditing] = useState(false);
   const layoutPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const layoutPointer = useRef<{
@@ -739,47 +648,6 @@ const Launcher: React.FC<{ staticPreview?: boolean }> = ({ staticPreview = false
       }
       return () => { cancelled = true; };
   }, [activeCharacterId, lastMsgTimestamp, isDataLoaded, characters]); // Trigger on characters change
-
-  // 右下角纪念日：选定的角色（dsqCharId 优先，否则当前活跃角色）
-  const dsqChar = useMemo(() => {
-      if (!characters || characters.length === 0) return null;
-      if (dsqCharId) return characters.find(c => c.id === dsqCharId) || characters[0];
-      return characters.find(c => c.id === activeCharacterId) || characters[0];
-  }, [characters, dsqCharId, activeCharacterId]);
-
-  // 右下角槽：长按弹设置弹窗（image / anniversary 都能进，方便切模式）
-  const dsqLongPressTimer = useRef<number | null>(null);
-  const openDsqSettings = useCallback(() => {
-      if (!layoutEditing) {
-          setDsqCharId(dsqChar?.id || activeCharacterId || characters[0]?.id || null);
-          setDsqSettingsOpen(true);
-      }
-  }, [layoutEditing, dsqChar, activeCharacterId, characters]);
-  const dsqStartPress = useCallback(() => {
-      dsqLongPressTimer.current = window.setTimeout(() => {
-          openDsqSettings();
-          dsqLongPressTimer.current = null;
-      }, 450);
-  }, [openDsqSettings]);
-  const dsqEndPress = useCallback(() => {
-      if (dsqLongPressTimer.current) { window.clearTimeout(dsqLongPressTimer.current); dsqLongPressTimer.current = null; }
-  }, []);
-
-  // 右下角图片：从本地相册选图（复用 processImage + updateTheme）
-  const dsqWidgetInputRef = useRef<HTMLInputElement>(null);
-  // 底图可能是 blobref 令牌（外观 App 上传路径），CSS url() 不识别，预览需先解析成 objectURL。
-  const resolvedDsqBg = useBlobRefUrl(theme.launcherWidgets?.['dsq']);
-  const handleDsqWidgetUpload = useCallback(async (file: File) => {
-      try {
-          const dataUrl = await processImage(file, { maxWidth: 600, quality: 0.9 });
-          const current = theme.launcherWidgets || {};
-          updateTheme({ launcherWidgets: { ...current, dsq: dataUrl } });
-      } catch (e) {
-          console.warn('[DsqWidget] 图片处理失败', e);
-      }
-  }, [theme.launcherWidgets, updateTheme]);
-  // 组件卸载清理
-  useEffect(() => () => { if (dsqLongPressTimer.current) window.clearTimeout(dsqLongPressTimer.current); }, []);
 
   // Schedule widget data loading (shown below SpecialMoments icon)
   const scheduleChar = useMemo(() => {
@@ -1166,11 +1034,11 @@ const Launcher: React.FC<{ staticPreview?: boolean }> = ({ staticPreview = false
       )}
       
       {/* Visual Elements (Decorative Background - Static, low-cost gradients instead of blur) */}
-      {/* 动森模式跳过：这层冷蓝光斑会污染奶油底 */}
+      {/* 动森模式跳过；底部暖色光斑仅用于纸张壁纸，避免给其他壁纸染色。 */}
       {!acnh && (
       <div className="absolute inset-0 pointer-events-none">
           <div className="absolute -top-20 -right-20 w-80 h-80 rounded-full" style={{ background: paper ? 'radial-gradient(circle, rgba(255,255,255,0.22) 0%, transparent 68%)' : 'radial-gradient(circle, rgba(255,255,255,0.05) 0%, transparent 70%)' }}></div>
-          <div className="absolute -bottom-20 -left-20 w-80 h-80 rounded-full" style={{ background: paper ? 'radial-gradient(circle, rgba(123,104,78,0.06) 0%, transparent 68%)' : 'radial-gradient(circle, rgba(59,130,246,0.08) 0%, transparent 70%)' }}></div>
+          {paper && <div className="absolute -bottom-20 -left-20 w-80 h-80 rounded-full" style={{ background: 'radial-gradient(circle, rgba(123,104,78,0.06) 0%, transparent 68%)' }}></div>}
       </div>
       )}
 
@@ -1255,31 +1123,12 @@ const Launcher: React.FC<{ staticPreview?: boolean }> = ({ staticPreview = false
                                       ) : cell === 'appsB' ? (
                                           <AppQuadGrid apps={page2QuadB} openApp={openApp} editing={layoutEditing} />
                                       ) : (
-                                          <div
-                                              className="w-full h-full"
-                                              onPointerDown={dsqStartPress}
-                                              onPointerUp={dsqEndPress}
-                                              onPointerLeave={dsqEndPress}
-                                              onPointerCancel={dsqEndPress}
-                                              onContextMenu={(e) => { e.preventDefault(); openDsqSettings(); }}
-                                          >
-                                              {theme.launcherDsqMode === 'anniversary' ? (
-                                                  <DesktopAnniversaryWidget
-                                                      contentColor={contentColor}
-                                                      acnh={acnh}
-                                                      char={dsqChar}
-                                                      bgImage={theme.launcherWidgets?.['dsq']}
-                                                      onOpenSettings={openDsqSettings}
-                                                  />
-                                              ) : (
-                                                  <DesktopSquareImage
-                                                      image={theme.launcherWidgets?.['dsq']}
-                                                      contentColor={contentColor}
-                                                      onClick={() => { if (!layoutEditing) openApp(AppID.Appearance); }}
-                                                      acnh={acnh}
-                                                  />
-                                              )}
-                                          </div>
+                                          <DesktopSquareImage
+                                              image={theme.launcherWidgets?.['dsq']}
+                                              contentColor={contentColor}
+                                              onClick={() => { if (!layoutEditing) openApp(AppID.Appearance); }}
+                                              acnh={acnh}
+                                          />
                                       )}
                                   </div>
                               ))}
@@ -1380,109 +1229,6 @@ const Launcher: React.FC<{ staticPreview?: boolean }> = ({ staticPreview = false
               </div>
           ))}
       </div>
-
-      {/* 右下角小组件设置弹窗（方图 / 纪念日 二选一） */}
-      {dsqSettingsOpen && (
-          <div
-              className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 backdrop-blur-[1px] p-4"
-              onClick={() => setDsqSettingsOpen(false)}
-          >
-              <div
-                  className="w-full sm:max-w-md bg-white rounded-3xl max-h-[85vh] overflow-y-auto no-scrollbar shadow-2xl"
-                  onClick={(e) => e.stopPropagation()}
-              >
-                  <div className="sticky top-0 z-10 bg-white/95 backdrop-blur-md px-5 pt-5 pb-3 border-b border-slate-100">
-                      <div className="flex items-center gap-2.5">
-                          <div className="flex-1">
-                              <div className="text-[15px] font-bold text-slate-800">右下角小组件</div>
-                              <div className="text-[11px] text-slate-400">在「方图 / 纪念日」之间切换</div>
-                          </div>
-                          <button onClick={() => setDsqSettingsOpen(false)} className="w-8 h-8 rounded-full bg-slate-100 text-slate-500 text-sm hover:bg-slate-200 transition-colors">✕</button>
-                      </div>
-                  </div>
-
-                  <div className="px-5 py-4 space-y-5">
-                      {/* 模式切换 */}
-                      <div>
-                          <div className="text-[12px] font-bold text-slate-500 mb-2">显示内容</div>
-                          <div className="grid grid-cols-2 gap-2">
-                              <button
-                                  onClick={() => updateTheme({ launcherDsqMode: 'image' })}
-                                  className={`px-3 py-2.5 rounded-xl border text-[12px] font-bold transition-colors ${theme.launcherDsqMode !== 'anniversary' ? 'border-sky-400 bg-sky-50 text-sky-700' : 'border-slate-200 bg-white text-slate-500'}`}
-                              >方图（图片）</button>
-                              <button
-                                  onClick={() => updateTheme({ launcherDsqMode: 'anniversary' })}
-                                  className={`px-3 py-2.5 rounded-xl border text-[12px] font-bold transition-colors ${theme.launcherDsqMode === 'anniversary' ? 'border-sky-400 bg-sky-50 text-sky-700' : 'border-slate-200 bg-white text-slate-500'}`}
-                              >纪念日</button>
-                          </div>
-                      </div>
-
-                      {/* 纪念日设置 */}
-                      {theme.launcherDsqMode === 'anniversary' && (
-                          <>
-                              {/* 选角色 */}
-                              <div>
-                                  <div className="text-[12px] font-bold text-slate-500 mb-2">选择角色</div>
-                                  <div className="flex flex-wrap gap-2">
-                                      {characters.map(c => (
-                                          <button
-                                              key={c.id}
-                                              onClick={() => setDsqCharId(c.id)}
-                                              className={`px-3 py-1.5 rounded-full text-[12px] font-bold transition-colors ${dsqCharId === c.id || (dsqChar?.id === c.id && !dsqCharId) ? 'bg-sky-500 text-white' : 'bg-slate-100 text-slate-600'}`}
-                                          >{c.name}</button>
-                                      ))}
-                                  </div>
-                              </div>
-
-                              {/* 背景图 */}
-                              <div>
-                                  <div className="text-[12px] font-bold text-slate-500 mb-2">背景图</div>
-                                  <input
-                                      ref={dsqWidgetInputRef}
-                                      type="file"
-                                      className="hidden"
-                                      accept="image/*"
-                                      onChange={(e) => { const f = e.target.files?.[0]; if (f) { handleDsqWidgetUpload(f); e.target.value = ''; } }}
-                                  />
-                                  <div className="flex items-center gap-3">
-                                      <div
-                                          className="w-14 h-14 rounded-xl shrink-0 bg-slate-100 border border-slate-200 overflow-hidden flex items-center justify-center text-[10px] text-slate-400"
-                                          style={theme.launcherWidgets?.['dsq'] ? { backgroundImage: `url(${resolvedDsqBg || theme.launcherWidgets['dsq']})`, backgroundSize: 'cover', backgroundPosition: 'center' } : {}}
-                                      >{!theme.launcherWidgets?.['dsq'] && '无'}</div>
-                                      <button
-                                          onClick={() => dsqWidgetInputRef.current?.click()}
-                                          className="flex-1 px-3 py-2.5 rounded-xl bg-sky-50 border border-sky-200 text-sky-700 text-[12px] font-bold active:scale-[0.98] transition-transform"
-                                      >{theme.launcherWidgets?.['dsq'] ? '更换背景图' : '从相册选择'}</button>
-                                  </div>
-                                  <div className="text-[10px] text-slate-400 mt-1">选中的图片会作为右下角方图 / 纪念日组件的底图</div>
-                              </div>
-
-                              {/* 起始日期 */}
-                              <div>
-                                  <div className="text-[12px] font-bold text-slate-500 mb-2">相伴起始日</div>
-                                  <input
-                                      type="date"
-                                      value={dsqChar?.relationshipStartDate || ''}
-                                      onChange={(e) => {
-                                          if (!dsqChar) return;
-                                          updateCharacter(dsqChar.id, {
-                                              relationshipStartDate: e.target.value || undefined,
-                                          });
-                                      }}
-                                      className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-[13px] focus:outline-none focus:border-sky-300"
-                                  />
-                                  <div className="text-[10px] text-slate-400 mt-1">留空则不显示；组件会算出「相伴 N 天」，聊天时角色也能感知。</div>
-                              </div>
-                          </>
-                      )}
-                  </div>
-
-                  <div className="px-5 pb-6">
-                      <button onClick={() => setDsqSettingsOpen(false)} className="w-full py-3 rounded-2xl bg-slate-800 text-white text-[13px] font-bold active:scale-[0.98] transition-transform">完成</button>
-                  </div>
-              </div>
-          </div>
-      )}
 
       {/* Floating Dock - Updated Margin and Safe Area handling */}
       <div

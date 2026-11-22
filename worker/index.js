@@ -282,11 +282,6 @@ return {handleWeibo,handleWeiboImage,readWeiboSession,weiboPageUid,normalizeWeib
 const BRAVE_ENDPOINT = "https://api.search.brave.com/res/v1";
 const FEISHU_BASE = "https://open.feishu.cn/open-apis";
 const XHS_BASE = "https://edith.xiaohongshu.com";
-// /xhs-media 代理放行的域名：只看后缀、子域一律允许。
-// 封面在 sns-webpic-qc.xhscdn.com，视频在 sns-video-hw.xhscdn.com，
-// 少数笔记图仍挂在 ci.xiaohongshu.com —— 只放 *.xhscdn.com 会漏掉后面两类。
-const XHS_MEDIA_HOSTS = ["xhscdn.com", "xhscdn.net", "xiaohongshu.com"];
-const XHS_MEDIA_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1";
 const XHS_MEDIA_HOST_CANDIDATES = [
   "https://edith.xiaohongshu.com",
   "https://creator.xiaohongshu.com",
@@ -296,14 +291,13 @@ const XHS_PUBLISH_HOST_CANDIDATES = [
   "https://edith.xiaohongshu.com",
   "https://www.xiaohongshu.com",
 ];
-const WEREAD_BASE = "https://weread.qq.com";
 
 function corsHeaders(origin) {
   return {
     "Access-Control-Allow-Origin": origin || "*",
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization, xi-api-key, model, language, X-MiniMax-Region, X-MiniMax-API-Key, Depth, X-Brave-API-Key, X-Notion-API-Key, X-Feishu-Token, X-Xhs-Cookie, X-Xhs-Platform, X-Rnote-API-Key, X-Xhs-Experiment-Ack, X-Netease-Cookie, X-Weread-Cookie, X-WebDAV-Method, X-WebDAV-Depth, X-WebDAV-Range, X-GitHub-Method, X-GitHub-Api-Version, X-CF-Method, Mcp-Session-Id, Accept, Range",
-    "Access-Control-Expose-Headers": "Mcp-Session-Id",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, xi-api-key, model, language, X-MiniMax-Region, X-MiniMax-API-Key, Depth, X-Brave-API-Key, X-Notion-API-Key, X-Feishu-Token, X-Xhs-Cookie, X-Xhs-Platform, X-Rnote-API-Key, X-Xhs-Experiment-Ack, X-Netease-Cookie, X-WebDAV-Method, X-WebDAV-Depth, X-WebDAV-Range, X-GitHub-Method, X-GitHub-Api-Version, X-CF-Method, Mcp-Session-Id, Accept, Range",
+    "Access-Control-Expose-Headers": "Mcp-Session-Id, X-Sully-Cache, X-Sully-Upstream",
     "Access-Control-Max-Age": "86400",
   };
 }
@@ -997,6 +991,11 @@ const NETEASE_ACTION_ALLOWED = new Set([
   "check/music",
 ]);
 
+// 320k 及以下档位直接走网页端 weapi 通道：海外 Serverless 机房 IP 叠加无状态实例缺 NMTID 时，
+// 客户端 eapi 通道极易触发网易云 -460 风控，而 weapi 自带临时设备标识、风控阈值宽松且 320k 内音质一致。
+// lossless / hires 等高阶档位仍优先走默认通道保高解析度，失败时再由外层降级重试 weapi。
+const NETEASE_WEAPI_DIRECT_LEVELS = new Set(["standard", "higher", "exhigh"]);
+
 function buildNeteaseUpstream(action, body, cookie) {
   if (!NETEASE_ACTION_ALLOWED.has(action)) return null;
 
@@ -1015,7 +1014,10 @@ function buildNeteaseUpstream(action, body, cookie) {
   } else if (action === "song/url") {
     const ids = Array.isArray(body.ids) ? body.ids : (body.id != null ? [body.id] : []);
     if (ids.length) p.set("id", ids.join(","));
-    p.set("level", body.level || "exhigh");
+    const level = body.level || "exhigh";
+    p.set("level", level);
+    const cryptoMode = body.crypto || (NETEASE_WEAPI_DIRECT_LEVELS.has(level) ? "weapi" : "");
+    if (cryptoMode) p.set("crypto", cryptoMode);
   } else if (action === "song/detail") {
     const ids = Array.isArray(body.ids) ? body.ids : (body.id != null ? [body.id] : []);
     if (ids.length) p.set("ids", ids.join(","));
@@ -1044,11 +1046,22 @@ function buildNeteaseUpstream(action, body, cookie) {
 
 // ========== 缓存 Key 构造 ==========
 // 使用"虚拟" URL 作为 Cache API 的 key。只包含业务参数（action + 过滤后的 body），
-// 故意剔除 cookie / realIP / timestamp / level(cookie 桶代替) 等不稳定参数。
-// 这样同一个 action 的相同查询跨 PoP / 多上游 都能命中同一个缓存条目。
+// 故意剔除 cookie / realIP / timestamp / crypto 等内部参数，登录态通过 cookieBucket 区分。
+// 这样同一个 action 的相同查询跨上游都能命中同一个缓存条目。
+async function hashNeteaseCookieBucket(cookie) {
+  const trimmed = (cookie || "").trim();
+  if (!trimmed) return "anon";
+  // 不同账号的会员权益不同：按凭据单向摘要隔离分桶，防止普通账号拿到的试听片段或空链接污染同节点会员，
+  // 同时避免把明文 Cookie 写进缓存键。
+  const bytes = new TextEncoder().encode(trimmed);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  const hex = Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, "0")).join("");
+  return `u_${hex.slice(0, 16)}`;
+}
+
 function buildCacheKey(action, body, cookieBucket) {
   const p = new URLSearchParams();
-  const skip = new Set(['timestamp', 'realIP', 'cookie', '_']);
+  const skip = new Set(['timestamp', 'realIP', 'cookie', 'crypto', '_']);
   for (const [k, v] of Object.entries(body || {})) {
     if (v == null || skip.has(k)) continue;
     if (Array.isArray(v)) p.set(k, v.join(","));
@@ -1063,9 +1076,27 @@ function buildCacheKey(action, body, cookieBucket) {
   );
 }
 
+function shouldCacheNeteaseResponse(action, text) {
+  try {
+    const j = JSON.parse(text);
+    if (j?.code !== 200) return false;
+    if (action === "song/url") {
+      // 空直链或试听片段不写边缘缓存，让用户登录或续费会员后的下一次请求直接回源拿到完整版。
+      const list = Array.isArray(j?.data) ? j.data : [];
+      if (!list.length) return false;
+      if (list.some(item => !item?.url || item.freeTrialInfo != null)) return false;
+    } else if (action === "mv/url") {
+      if (!j?.data?.url) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // ========== 多上游 fetch 带失败转移 ==========
-// 从 NETEASE_UPSTREAMS 随机打乱, 依次尝试, 任何一个成功(HTTP 2xx + code!=-460)就返回。
-// 自动屏蔽被网易风控的上游 (HTTP 200 但 body 里 code=-460 / -7 = 被限流)。
+// 从 NETEASE_UPSTREAMS 随机打乱, 依次尝试, 任何一个成功(HTTP 2xx 且非风控码)就返回。
+// 无论配置了几个上游，code=-460 / -7 一律按风控失败处理，不放行也不写缓存。
 function shuffleCopy(arr) {
   const a = [...arr];
   for (let i = a.length - 1; i > 0; i--) {
@@ -1078,7 +1109,9 @@ function shuffleCopy(arr) {
 async function fetchFromAnyUpstream(upstreamPath, timeoutMs = 8000) {
   const order = shuffleCopy(NETEASE_UPSTREAMS);
   const errors = [];
+  let riskControlled = false;
   for (const base of order) {
+    const host = new URL(base).host;
     const upstreamUrl = base.replace(/\/+$/, '') + upstreamPath;
     try {
       const ctrl = new AbortController();
@@ -1091,27 +1124,27 @@ async function fetchFromAnyUpstream(upstreamPath, timeoutMs = 8000) {
       clearTimeout(t);
 
       const text = await res.text();
-      // HTTP 层挂了直接换下一个
+      let parsed = null;
+      try { parsed = JSON.parse(text); } catch { /* 非 JSON 交由下方 HTTP 状态码判断 */ }
+
+      // api-enhanced 遇到 -460/-7 风控时可能返回 HTTP 400 或 HTTP 200；统一识别为风控失败，
+      // 以便触发多上游切换或 song/url 的 weapi 兜底，且绝不把风控报文当正常结果缓存。
+      if (parsed && (parsed.code === -460 || parsed.code === -7)) {
+        riskControlled = true;
+        errors.push(`${host} risk-control (code=${parsed.code})`);
+        continue;
+      }
+
       if (!res.ok) {
-        errors.push(`${new URL(base).host} HTTP ${res.status}`);
+        errors.push(`${host} HTTP ${res.status}`);
         continue;
       }
-      // 应用层风控: 尝试识别 -460/-7 等明显失败码, 这种情况下换个上游可能成功
-      let shouldFailover = false;
-      try {
-        const j = JSON.parse(text);
-        if (j?.code === -460 || j?.code === -7) shouldFailover = true;
-      } catch { /* 不是 JSON, 当成功处理 */ }
-      if (shouldFailover && order.length > 1) {
-        errors.push(`${new URL(base).host} risk-control (code=-460/-7)`);
-        continue;
-      }
-      return { text, status: res.status, upstream: new URL(base).host, error: null };
+      return { text, status: res.status, upstream: host, error: null, riskControlled: false };
     } catch (e) {
-      errors.push(`${new URL(base).host} ${e.name === 'AbortError' ? 'timeout' : e.message}`);
+      errors.push(`${host} ${e.name === 'AbortError' ? 'timeout' : e.message}`);
     }
   }
-  return { text: '', status: 502, upstream: '', error: errors.join(' | ') };
+  return { text: '', status: 502, upstream: '', error: errors.join(' | '), riskControlled };
 }
 
 
@@ -3330,147 +3363,6 @@ export default {
       return jsonResponse({ error: "Unknown Feishu endpoint" }, { status: 404, origin });
     }
 
-    // ========== 微信读书代理（真实书架/笔记/正文，个人自用） ==========
-    // cookie 由浏览器经 X-Weread-Cookie 头带上（与小红书 X-Xhs-Cookie 同模式），
-    // worker 只转发、不落库；上游为 weread.qq.com 网页版内部接口，字段变动可在
-    // 下方 normalizeXxx 处统一修，前端不直接依赖原始字段。
-    if (url.pathname.startsWith('/weread/')) {
-      const cookie = request.headers.get("X-Weread-Cookie");
-      if (!cookie) {
-        return jsonResponse({ error: "NO_COOKIE", message: "缺少 X-Weread-Cookie：请在微信读书 App『我』页登录/粘贴 cookie" }, { status: 401, origin });
-      }
-      const q = new URL(request.url).searchParams;
-      const action = url.pathname.replace(/^\/weread\//, "").split("/")[0] || "";
-      const upstreamHeaders = {
-        "Cookie": cookie,
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
-        "Referer": "https://weread.qq.com/",
-      };
-
-      const forward = async (upstreamUrl) => {
-        let res;
-        try {
-          res = await fetch(upstreamUrl, { method: "GET", headers: upstreamHeaders });
-        } catch (e) {
-          return jsonResponse({ error: "UPSTREAM_NETWORK", message: "微信读书接口暂不可达，请稍后重试" }, { status: 502, origin });
-        }
-        const text = await res.text();
-        if (!res.ok || res.status >= 400) {
-          if (res.status === 401 || res.status === 403 || /login|未登录|请先登录/i.test(text.slice(0, 300))) {
-            return jsonResponse({ error: "COOKIE_EXPIRED", message: "微信读书登录已失效，请到『我』页重新登录/更新 cookie" }, { status: 401, origin });
-          }
-          return jsonResponse({ error: "WEREAD_ERROR", message: `微信读书接口异常（HTTP ${res.status}）` }, { status: 502, origin });
-        }
-        let data = {};
-        try { data = text ? JSON.parse(text) : {}; } catch (e) { /* 非 JSON：按空数据处理 */ }
-        return jsonResponse({ data }, { origin });
-      };
-
-      // GET /weread/shelf - 书架（在读/想读/读完 + 进度）
-      if (action === "shelf") {
-        const realVid = q.get("userVid") || getCookieValue(cookie, "wr_vid") || "";
-        return forward(`${WEREAD_BASE}/web/shelf/sync?userVid=${encodeURIComponent(realVid)}&listMode=0&mineOnly=1&synckey=0`);
-      }
-      // GET /weread/book?bookId=xxx - 书籍信息（书名/作者/简介/封面）
-      if (action === "book") {
-        const bookId = q.get("bookId") || "";
-        if (!bookId) return jsonResponse({ error: "BAD_REQUEST", message: "缺少 bookId" }, { status: 400, origin });
-        return forward(`${WEREAD_BASE}/web/book/info?bookId=${encodeURIComponent(bookId)}`);
-      }
-      // GET /weread/chapters?bookIds=xxx - 章节目录（正文阅读页用）
-      if (action === "chapters") {
-        const bookIds = q.get("bookIds") || "";
-        if (!bookIds) return jsonResponse({ error: "BAD_REQUEST", message: "缺少 bookIds" }, { status: 400, origin });
-        return forward(`${WEREAD_BASE}/web/book/chapterInfos?bookIds=${encodeURIComponent(bookIds)}&synckeys=0`);
-      }
-      // GET /weread/read?bookId=xxx&chUid=xxx - 某章正文（接口偶有不稳，前端需降级）
-      if (action === "read") {
-        const bookId = q.get("bookId") || "";
-        const chUid = q.get("chUid") || q.get("chapterUid") || "";
-        if (!bookId || !chUid) return jsonResponse({ error: "BAD_REQUEST", message: "缺少 bookId 或 chUid" }, { status: 400, origin });
-        return forward(`${WEREAD_BASE}/web/reader/${encodeURIComponent(bookId)}_${encodeURIComponent(chUid)}?reader=1&info=1`);
-      }
-      // GET /weread/notes?bookId=xxx - 划线/想法（列表）
-      if (action === "notes") {
-        const bookId = q.get("bookId") || "";
-        if (!bookId) return jsonResponse({ error: "BAD_REQUEST", message: "缺少 bookId" }, { status: 400, origin });
-        return forward(`${WEREAD_BASE}/web/book/notes?bookId=${encodeURIComponent(bookId)}&listType=1&mine=1&synckey=0`);
-      }
-      // GET /weread/search?keyword=xxx - 搜索书籍/作者
-      if (action === "search") {
-        const keyword = q.get("keyword") || "";
-        if (!keyword) return jsonResponse({ error: "BAD_REQUEST", message: "缺少 keyword" }, { status: 400, origin });
-        const maxIdx = q.get("maxIdx") || "0";
-        return forward(`${WEREAD_BASE}/web/search/global?keyword=${encodeURIComponent(keyword)}&maxIdx=${encodeURIComponent(maxIdx)}&fragmentSize=100&maxCount=10`);
-      }
-      return jsonResponse({ error: "Unknown Weread endpoint" }, { status: 404, origin });
-    }
-
-    // ========== 小红书媒体代理（不需要 cookie，只做防盗链中继） ==========
-    // 笔记图片/视频挂在 *.xhscdn.com 上，且带 Referer 校验：浏览器直连会 403，
-    // 视觉模型的服务端抓取也会 403。这里只放行小红书自家的 CDN 域名——
-    // 不做白名单的话，?url= 就是一个无状态 GET 的开放代理（能打内网和云元数据）。
-    if (url.pathname === '/xhs-media') {
-      if (request.method === 'OPTIONS') {
-        return new Response(null, {
-          status: 204,
-          headers: {
-            'Access-Control-Allow-Origin': origin || '*',
-            'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
-            'Access-Control-Allow-Headers': 'Range',
-            'Access-Control-Max-Age': '86400',
-          },
-        });
-      }
-      if (request.method !== 'GET' && request.method !== 'HEAD') {
-        return jsonResponse({ error: 'METHOD_NOT_ALLOWED' }, { status: 405, origin });
-      }
-
-      const target = url.searchParams.get('url') || '';
-      if (!target) return jsonResponse({ error: 'BAD_REQUEST', message: '缺少 url' }, { status: 400, origin });
-
-      let mediaUrl;
-      try {
-        mediaUrl = new URL(target);
-      } catch {
-        return jsonResponse({ error: 'BAD_URL' }, { status: 400, origin });
-      }
-      // 只允许 https：http 既会被 CDN 拒，也顺手挡住了 file:/gopher: 之类的协议。
-      if (mediaUrl.protocol !== 'https:') {
-        return jsonResponse({ error: 'ONLY_HTTPS' }, { status: 400, origin });
-      }
-      const mediaHost = mediaUrl.hostname.toLowerCase();
-      const hostAllowed = XHS_MEDIA_HOSTS.some(base => mediaHost === base || mediaHost.endsWith('.' + base));
-      if (!hostAllowed) {
-        return jsonResponse({ error: 'HOST_NOT_ALLOWED', host: mediaHost }, { status: 403, origin });
-      }
-
-      // Range 要原样转发：视频拖动进度条靠它，图片偶尔也走 206。
-      const range = request.headers.get('Range');
-      const upstream = await fetch(mediaUrl.toString(), {
-        method: request.method,
-        headers: {
-          'Referer': 'https://www.xiaohongshu.com/',
-          'User-Agent': XHS_MEDIA_UA,
-          ...(range ? { 'Range': range } : {}),
-        },
-        redirect: 'follow',
-      });
-
-      const passthrough = new Headers();
-      for (const [key, value] of upstream.headers) {
-        if (/^(content-type|content-length|content-range|accept-ranges|etag|last-modified)$/i.test(key)) {
-          passthrough.set(key, value);
-        }
-      }
-      passthrough.set('Access-Control-Allow-Origin', origin || '*');
-      passthrough.set('Cache-Control', 'public, max-age=86400');
-      return new Response(request.method === 'HEAD' ? null : upstream.body, {
-        status: upstream.status,
-        headers: passthrough,
-      });
-    }
-
     // ========== 小红书代理 ==========
     if (url.pathname.startsWith('/xhs/')) {
       const cookie = request.headers.get("X-Xhs-Cookie");
@@ -4545,12 +4437,15 @@ export default {
       }
 
       // ── 边缘缓存: 对公共数据(歌词/搜索/song/url 等) 命中直接返回 ──
+      const edgeCache = (typeof caches !== 'undefined' && caches && caches.default) ? caches.default : null;
       const ttl = NETEASE_CACHE_TTL[action] || 0;
-      // song/url 受 VIP cookie 影响 → 用 has-cookie 分桶; 其余公共接口 cookie 不影响结果
-      const cookieBucket = (action === 'song/url' && cookie) ? 'vip' : 'anon';
-      const cacheKey = ttl > 0 ? buildCacheKey(action, body, cookieBucket) : null;
-      if (cacheKey) {
-        const cached = await caches.default.match(cacheKey);
+      // song/url 受具体账号会员等级影响 → 按凭据单向摘要隔离分桶；其余公共接口用 anon 共享缓存
+      const cookieBucket = action === 'song/url'
+        ? await hashNeteaseCookieBucket(cookie)
+        : 'anon';
+      const cacheKey = (edgeCache && ttl > 0) ? buildCacheKey(action, body, cookieBucket) : null;
+      if (edgeCache && cacheKey) {
+        const cached = await edgeCache.match(cacheKey);
         if (cached) {
           const text = await cached.text();
           return new Response(text, {
@@ -4565,10 +4460,28 @@ export default {
       }
 
       // ── 多上游 + 容灾: 随机打乱后依次尝试, 任意一个成功就返回 ──
-      const { text, status, upstream, error } = await fetchFromAnyUpstream(upstreamPath);
+      let result = await fetchFromAnyUpstream(upstreamPath);
+      const requestedLevel = (body && body.level) || 'exhigh';
+      // lossless / hires 首轮走默认客户端通道；若全部上游因机房 IP / NMTID 触发风控或失败，
+      // 自动切到网页端 weapi 通道兜底重试一次，优先保证能放出声音。
+      if (
+        result.error &&
+        action === 'song/url' &&
+        !(body && body.crypto) &&
+        !NETEASE_WEAPI_DIRECT_LEVELS.has(requestedLevel)
+      ) {
+        const fallbackPath = buildNeteaseUpstream(action, { ...body, crypto: 'weapi' }, cookie);
+        if (fallbackPath) {
+          result = await fetchFromAnyUpstream(fallbackPath);
+        }
+      }
+
+      const { text, status, upstream, error, riskControlled } = result;
       if (error) {
         return jsonResponse({
-          error: "netease upstream fetch failed (all sources)",
+          error: riskControlled
+            ? "网易云接口触发风控，请稍后再试"
+            : "netease upstream fetch failed (all sources)",
           detail: error,
           tried: NETEASE_UPSTREAMS.length,
         }, { status: 502, origin });
@@ -4584,8 +4497,8 @@ export default {
         }
       });
 
-      // ── 写回缓存 (异步, 不阻塞响应) ──
-      if (cacheKey && status >= 200 && status < 400) {
+      // ── 写回缓存 (异步, 不阻塞响应；仅缓存业务 code=200 且有效的结果) ──
+      if (edgeCache && cacheKey && status >= 200 && status < 400 && shouldCacheNeteaseResponse(action, text)) {
         const cacheResp = new Response(text, {
           status: 200,
           headers: {
@@ -4594,10 +4507,10 @@ export default {
           }
         });
         if (ctx && typeof ctx.waitUntil === 'function') {
-          ctx.waitUntil(caches.default.put(cacheKey, cacheResp));
+          ctx.waitUntil(edgeCache.put(cacheKey, cacheResp));
         } else {
           // dev 环境没有 ctx 时直接 fire-and-forget
-          caches.default.put(cacheKey, cacheResp).catch(() => {});
+          edgeCache.put(cacheKey, cacheResp).catch(() => {});
         }
       }
 

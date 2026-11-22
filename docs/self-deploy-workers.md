@@ -11,10 +11,6 @@
 
 每个都是独立的，只部署你要用的那个就行。
 
-> **微信桥（wechat-bridge）不在这个仓库里。** 它的要求不太一样（要 D1 + 每分钟定时器 + 两个密钥），
-> 所以单独写了一份图文手册，全程浏览器点击、不用命令行：
-> [《微信桥 · 从零开始的部署手册》](https://github.com/361293184/ShinQ-qs/blob/main/docs/wechat-bridge-setup-walkthrough.md)。
-
 > 只部署主动消息（`amsg/`）的话，SullyOS 那边还有一份带截图的完整版：
 > [主动消息 2.0 · 从零开始的部署手册](https://github.com/qegj567-cloud/SullyOS/blob/master/docs/amsg2-setup-walkthrough.md)。
 
@@ -73,6 +69,8 @@ Secrets 要等**部署完**再填：Worker 页面 → **Settings** → 最上面
 | Secret | `VAPID_PRIVATE_KEY` | 同上 | 是 |
 | Text | `VAPID_EMAIL` | 随便一个 `mailto:你的邮箱` | 否 |
 | Secret | `AMSG_SERVER_TOKEN` | 自己起一个密码，填了就要求所有请求带上它 | 否 |
+
+平时不要设 `AMSG_RESCUE_TOKEN`。它只在本地数据被清空、需要从云端救数据时临时加，用完立刻删掉，见 [主动消息 2.0 · 数据救援](./amsg2-rescue.md)。
 
 填完点右下角 **Deploy**。
 
