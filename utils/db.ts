@@ -31,8 +31,10 @@ import {
     LifeSimState, HandbookEntry, Tracker, TrackerEntry, HotNewsSnapshot,
     LifeRecord, MedPlan, LifeRecordSettings, CharacterGroup,
     VRWorldNovel, VRLibraryCategory, VRNovelAnnotation, CustomCreatorPart, VRMusicRoomState, VRGuestbookState, VRScript, VRStagedPlay, VRLetter,
-    WorldProfile, WorldEpisode, StoryTheaterEntry, StoryTheaterPreset, StoryTheaterMask
+    WorldProfile, WorldEpisode, StoryTheaterEntry, StoryTheaterPreset, StoryTheaterMask,
+    FanwaiStory, LetterRecord
 } from '../types';
+import { sanitizeMirrorList } from './mirrorSanitize';
 import { exportPostOfficeLocal, importPostOfficeLocal } from './vrWorld/postOffice';
 import { exportSignalLocal, importSignalLocal } from './vrWorld/signal';
 import { exportLuckinLocal, importLuckinLocal } from './luckinMcpClient';
@@ -161,6 +163,50 @@ const withoutRuntimeRecall = <T extends CharacterProfile | undefined>(character:
     const { memoryPalaceInjection: _recall, roomPlatesInjection: _plates, ...rest } = character;
     return rest as T;
 };
+
+// —— 番外收藏 localStorage 镜像（模块级函数，避免依赖 DB 对象上的 this）——
+const FANWAI_MIRROR_KEY = 'os_fanwai_stories_v1';
+
+/**
+ * 镜像里的脏数据（null / 非对象 / 缺 id）在读写前统一由 sanitizeMirrorList 丢弃：
+ * 镜像的增删都是 `mirror.filter(s => s.id !== ...)`，碰到 null 会抛
+ * "null is not an object (evaluating 's.id')"，镜像就再也写不回去。
+ */
+function readFanwaiMirror(): FanwaiStory[] {
+    try {
+        const raw = localStorage.getItem(FANWAI_MIRROR_KEY);
+        if (!raw) return [];
+        return sanitizeMirrorList<FanwaiStory>(JSON.parse(raw));
+    } catch {
+        return [];
+    }
+}
+function writeFanwaiMirror(stories: FanwaiStory[]): void {
+    try {
+        localStorage.setItem(FANWAI_MIRROR_KEY, JSON.stringify(sanitizeMirrorList<FanwaiStory>(stories)));
+    } catch {
+        /* 隐私模式/配额满等场景静默忽略，IndexedDB 仍是主存储 */
+    }
+}
+
+// —— 来信收藏 localStorage 镜像（与番外同一套兜底思路；信是礼物，不能丢）——
+const LETTER_MIRROR_KEY = 'os_collected_letters_v1';
+function readLetterMirror(): LetterRecord[] {
+    try {
+        const raw = localStorage.getItem(LETTER_MIRROR_KEY);
+        if (!raw) return [];
+        return sanitizeMirrorList<LetterRecord>(JSON.parse(raw));
+    } catch {
+        return [];
+    }
+}
+function writeLetterMirror(letters: LetterRecord[]): void {
+    try {
+        localStorage.setItem(LETTER_MIRROR_KEY, JSON.stringify(sanitizeMirrorList<LetterRecord>(letters)));
+    } catch {
+        /* 隐私模式/配额满等场景静默忽略，IndexedDB 仍是主存储 */
+    }
+}
 
 /** 和新消息同事务失效镜像，防止后台把刚清掉的旧水位重新恢复。 */
 function clearStaleMemoryMirror(transaction: IDBTransaction, charId: string, newId: number): void {

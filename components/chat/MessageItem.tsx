@@ -27,6 +27,7 @@ import { getPaperTheme } from '../../utils/letter/paperThemes';
 import LetterEnvelope from '../letter/LetterEnvelope';
 import LetterReplyView from '../letter/LetterReplyView';
 import ChatImage from './ChatImage';
+import { ChatTranslationText } from './ChatSubtitleLayer';
 import { SARSpeechSwitch } from '../sar/SARSpeechSwitch';
 import McdCard from './McdCard';
 import HtmlCard from './HtmlCard';
@@ -1149,6 +1150,8 @@ interface MessageItemProps {
     activeTheme: ChatTheme;
     charAvatar: string;
     charName: string;
+    /** 点击角色头像打开角色名片（上游 3.6 起的交互） */
+    onOpenCharacterProfile?: () => void;
     userAvatar: string;
     /** 当前窗口里的最后一条消息；最新图片需要立即解码，避免移动端懒加载卡在滚动容器底部。 */
     isLatestMessage?: boolean;
@@ -1169,6 +1172,8 @@ interface MessageItemProps {
     translationEnabled?: boolean;
     /** 「直接展开」模式：原文与译文同时显示（按角色保存，见 chat_translate_expanded_*） */
     translationExpanded?: boolean;
+    /** 翻译呈现方式：气泡内追加（默认）或外挂字幕 */
+    translationStyle?: 'bubble' | 'subtitle';
     isShowingTarget?: boolean;
     onTranslateToggle?: (msgId: number) => void;
     // Voice TTS
@@ -1221,6 +1226,7 @@ const MessageItem = React.memo(({
     activeTheme,
     charAvatar,
     charName,
+    onOpenCharacterProfile,
     userAvatar,
     isLatestMessage = false,
     onMediaLoad,
@@ -1235,6 +1241,7 @@ const MessageItem = React.memo(({
     onToggleThinkingSelect,
     translationEnabled,
     translationExpanded,
+    translationStyle = 'bubble',
     isShowingTarget,
     onTranslateToggle,
     voiceData,
@@ -1437,8 +1444,19 @@ const MessageItem = React.memo(({
         options?: { visible?: boolean; className?: string },
     ) => {
         const visible = options?.visible ?? shouldShowAvatar;
+        // 角色头像可点开角色名片；用户头像不响应，多选模式下不抢点击
+        const opensProfile = visible && !isUser && !selectionMode && !!onOpenCharacterProfile;
         return (
-            <div className={`${visible ? 'sully-chat-avatar-wrap' : ''} relative ${avatarSizeClass} z-0 ${options?.className || ''}`}>
+            <div
+                className={`${visible ? 'sully-chat-avatar-wrap' : ''} relative ${avatarSizeClass} z-0 ${options?.className || ''}${opensProfile ? ' cursor-pointer' : ''}`}
+                onClick={opensProfile ? (event) => { event.stopPropagation(); onOpenCharacterProfile?.(); } : undefined}
+                onKeyDown={opensProfile ? (event) => {
+                    if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onOpenCharacterProfile?.(); }
+                } : undefined}
+                role={opensProfile ? 'button' : undefined}
+                tabIndex={opensProfile ? 0 : undefined}
+                aria-label={opensProfile ? `查看${charName}的角色名片` : undefined}
+            >
                 {visible && (
                     <>
                         <TokenImg
@@ -4113,15 +4131,19 @@ const MessageItem = React.memo(({
             {/* Layer 4: Text Content — shown when there's visible text after stripping voice tags */}
             {/* 外语语音消息把双语文字交给下方语音条渲染，顶部不再重复正文 */}
             {displayContent && !isForeignVoiceMsg && (
-            <div className="relative z-10 text-[15px] leading-relaxed whitespace-pre-wrap break-normal [overflow-wrap:anywhere] select-text" style={{ color: styleConfig.textColor }}>
+            <ChatTranslationText
+                className="relative z-10 text-[15px] leading-relaxed whitespace-pre-wrap break-normal [overflow-wrap:anywhere] select-text"
+                style={{ color: styleConfig.textColor }}
+                subtitle={showExpandedTranslation && translationStyle === 'subtitle' ? renderContent(langBContent) : undefined}
+            >
                 {renderContent(displayContent)}
-                {showExpandedTranslation && (
+                {showExpandedTranslation && translationStyle !== 'subtitle' && (
                     <div className="mt-2.5 pt-2 border-t border-current/15">
                         <div className="mb-1 text-[9px] font-bold tracking-[0.16em] opacity-40 select-none">翻译</div>
                         {renderContent(langBContent)}
                     </div>
                 )}
-            </div>
+            </ChatTranslationText>
             )}
 
             {hasSarSurface && (displayContent || hasVoiceContent) && (

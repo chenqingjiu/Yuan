@@ -133,7 +133,10 @@ import { resolveTtsProvider } from '../utils/ttsProvider';
 118-125
 import { resolveActiveSound, playWhiteboxSound, unlockWhiteboxAudio, parseWhiteboxSound, upsertWhiteboxSound, stripWhiteboxSoundDirective, WhiteboxSound } from '../utils/whiteboxSound';
 import WhiteboxSoundEditor from '../components/chat/WhiteboxSoundEditor';
+import ChatCharacterProfile from '../components/chat/ChatCharacterProfile';
 import { normalizeTranslationLangLabel, isTranslationLangPreset } from '../utils/translationLang';
+import { readChatTranslationStyle, readSubtitleSettings, saveSubtitleSettings, type ChatTranslationStyle } from '../utils/chatTranslationStyle';
+import { ChatSubtitleLayer } from '../components/chat/ChatSubtitleLayer';
 import { CharacterGroupFilterBar, filterCharactersByGroup, GROUP_FILTER_ALL } from '../components/character/CharacterGroupFilter';
 import { trackEvent, noteMessageSent } from '../utils/analytics';
 import { markAmsgStateDirty, markAmsgStateDirtyForAll } from '../utils/amsgStateSync';
@@ -410,6 +413,13 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
     // --- Translation State (per-character) ---
     // 翻译面板是否展开（上游新增：展开后才显示语言选择）
   const [translationExpanded, setTranslationExpanded] = useState(false);
+  // 外挂字幕：翻译样式（气泡 / 字幕）与字幕排版设置，随角色持久化
+  const [translationStyle, setTranslationStyle] = useState<ChatTranslationStyle>(() => readChatTranslationStyle(activeCharacterId));
+  const [subtitleSettings, setSubtitleSettings] = useState(() => readSubtitleSettings(activeCharacterId));
+  useEffect(() => {
+    setTranslationStyle(readChatTranslationStyle(activeCharacterId));
+    setSubtitleSettings(readSubtitleSettings(activeCharacterId));
+  }, [activeCharacterId]);
   const [translationEnabled, setTranslationEnabled] = useState(() => {
         try { return JSON.parse(localStorage.getItem(`chat_translate_enabled_${activeCharacterId}`) || 'false'); } catch { return false; }
     });
@@ -428,6 +438,19 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
     const [showingTargetIds, setShowingTargetIds] = useState<Set<number>>(new Set());
 
     const char = characters.find(c => c.id === activeCharacterId) || characters[0];
+
+    // 角色名片：点头像 / 尾部手势 / 头像旁的按钮都能打开
+    const [profileCharacterId, setProfileCharacterId] = useState<string | null>(null);
+    const [profileTabOnOpen, setProfileTabOnOpen] = useState<'当前' | '设定' | '日程'>('当前');
+    const profileOpen = !!char && profileCharacterId === char.id;
+    const openCharacterProfile = useCallback(() => {
+        if (!char?.id) return;
+        trackEvent('打开聊天角色名片');
+        setShowPanel('none');
+        setProfileTabOnOpen('当前');
+        setProfileCharacterId(char.id);
+    }, [char?.id]);
+    useEffect(() => { setProfileCharacterId(null); }, [char?.id]);
     const memoryRepairRound = useMemo(() => {
         let assistantIndex = -1;
         for (let i = messages.length - 1; i >= 0; i--) {
@@ -4582,6 +4605,16 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
                 message="检测到分享链接，要关闭自动转卡片吗？关闭后，本条及之后的链接会按原文发送，方便角色用你配置的 MCP 读取。保留卡片也会带上原链接。两类解析可在加号 → 设置中分别调整。"
                 confirmText="关闭，发送原文" cancelText="保留卡片"
                 onConfirm={() => answerLinkCard(false)} onCancel={() => answerLinkCard(true)} />
+            {profileOpen && char && <ChatCharacterProfile
+                key={`profile:${char.id}`}
+                character={char}
+                customCss={(char.chatProfileAppearance ?? osTheme.chatProfileAppearance)?.customCss}
+                initialTab={profileTabOnOpen}
+                schedule={scheduleData?.charId === char.id && scheduleData.date === charDateKey ? scheduleData : null}
+                onClose={() => setProfileCharacterId(null)}
+                onSchedule={() => { setProfileCharacterId(null); setModalType('schedule'); }}
+                onPlayTheater={(index) => { setProfileTabOnOpen('日程'); handlePlayTheater(index); }}
+                onMemory={() => { setProfileCharacterId(null); setMemoryRepairOpen(true); }} />}
             <ChatModals
                 compactHome={!!homePhone}
                 modalType={modalType} setModalType={setModalType}
@@ -4902,6 +4935,7 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
 
             <StreamingVoiceBar state={streamingVoice.state} onStop={stopStreamingVoice} />
             <div ref={scrollRef} onScroll={handleChatScroll} onClick={() => { if (inputPreferences.autoReply) setShowPanel('none'); }} className="flex-1 overflow-y-auto overflow-x-hidden pt-6 pb-6 no-scrollbar" style={{ backgroundImage: activeTheme.type === 'custom' && activeTheme.user.backgroundImage ? 'none' : undefined }}>
+                <ChatSubtitleLayer enabled={translationEnabled && translationExpanded && translationStyle === 'subtitle'} settings={subtitleSettings}>
                 {windowedFocusMsgId !== null && (
                     <div className="sticky top-0 z-20 flex justify-center pb-2 pointer-events-none">
                         <button onClick={handleBackToCurrent} className="pointer-events-auto px-4 py-2 bg-primary text-white rounded-full text-xs font-bold shadow-lg active:scale-95 transition-transform flex items-center gap-1.5">
@@ -4957,6 +4991,7 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
                             activeTheme={activeTheme}
                             charAvatar={char.avatar}
                             charName={char.name}
+                            onOpenCharacterProfile={openCharacterProfile}
                             userAvatar={userProfile.perCharAvatars?.[char.id] || userProfile.avatar}
                             isLatestMessage={!nextMessage}
                             onMediaLoad={handleMessageMediaLoad}
@@ -4977,6 +5012,8 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
                             isThinkingSelected={selectedThinkingMsgIds.has(m.id)}
                             onToggleThinkingSelect={toggleThinkingSelection}
                             translationEnabled={translationEnabled && m.type === 'text' && m.role === 'assistant'}
+                            translationExpanded={translationExpanded}
+                            translationStyle={translationStyle}
                             isShowingTarget={showingTargetIds.has(m.id)}
                             onTranslateToggle={handleTranslateToggle}
                             voiceData={voiceDataMap[m.id]}
@@ -5042,6 +5079,7 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
                                     activeTheme={activeTheme}
                                     charAvatar={char.avatar}
                                     charName={char.name}
+                                    onOpenCharacterProfile={openCharacterProfile}
                                     userAvatar={userProfile.perCharAvatars?.[char.id] || userProfile.avatar}
                                     onLongPress={() => {}}
                                     onReply={() => {}}
@@ -5091,6 +5129,7 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
                         </div>
                     </div>
                 )}
+            </ChatSubtitleLayer>
             </div>
 
             <div className="relative z-40">

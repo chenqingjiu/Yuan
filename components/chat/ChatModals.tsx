@@ -10,6 +10,7 @@ import TokenImg from '../os/TokenImg';
 import { CANTONESE_VOICE_SUPPORT_NOTE, VOICE_LANGUAGE_OPTIONS } from '../../utils/voiceLanguage';
 import SecretNote from './SecretNote';
 import type { ChatInputPreferences } from '../../utils/chatInputPreferences';
+import { SUBTITLE_FONTS, DEFAULT_SUBTITLE_SETTINGS, type ChatSubtitleSettings } from '../../utils/chatTranslationStyle';
 import { isTranslationLangPreset, normalizeTranslationLangLabel, TRANSLATION_LANG_MAX_LENGTH, TRANSLATION_LANG_PRESETS } from '../../utils/translationLang';
 import type { ContextRangeMode, ContextRangeSnapshot } from '../../utils/chatContextRange';
 import { trackEvent } from '../../utils/analytics';
@@ -109,6 +110,11 @@ interface ChatModalsProps {
     translateTargetLang?: string;
     onSetTranslateSourceLang?: (lang: string) => void;
     onSetTranslateLang?: (lang: string) => void;
+    /** 翻译呈现方式：气泡内追加 / 外挂字幕 */
+    translationStyle?: 'bubble' | 'subtitle';
+    onSetTranslationStyle?: (style: 'bubble' | 'subtitle') => void;
+    subtitleSettings?: ChatSubtitleSettings;
+    onSetSubtitleSettings?: (next: ChatSubtitleSettings) => void;
     // XHS toggle
     xhsEnabled?: boolean;
     onToggleXhs?: () => void;
