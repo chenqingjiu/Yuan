@@ -42,6 +42,7 @@ export class FarmScene {
 
     private houseGroup = new THREE.Group();
     private houseTexCache = new Map<number, THREE.Texture>();
+    private cropTexCache = new Map<string, THREE.Texture>();
     private houseLevel = 1;
 
     private actor: ChibiVisitor | null = null;
@@ -230,8 +231,12 @@ export class FarmScene {
     // ---------- 作物 ----------
 
     private cropTexture(crop: CropId, stage: number) {
+        const key = `${crop}-${stage}`;
+        const cached = this.cropTexCache.get(key);
+        if (cached) return cached;
         const t = new THREE.TextureLoader().load(`${import.meta.env.BASE_URL}farm/${crop}-${stage}.png`);
         t.colorSpace = THREE.SRGBColorSpace;
+        this.cropTexCache.set(key, t);
         return t;
     }
 
@@ -244,15 +249,18 @@ export class FarmScene {
 
         const old = this.plotCrops[index];
         if (old) {
+            // 作物是挂在 scene 上的，不在 group 里：这里必须从父节点摘掉，
+            // 否则旧的一株会一直留在原地，新的一株叠在同一个位置
+            old.removeFromParent();
+            const materials = new Set<THREE.Material>();
+            const geometries = new Set<THREE.BufferGeometry>();
             old.traverse(o => {
-                if (o instanceof THREE.Mesh) {
-                    const m = o.material as THREE.MeshLambertMaterial;
-                    m.map?.dispose();
-                    m.dispose();
-                    o.geometry.dispose();
-                }
+                if (!(o instanceof THREE.Mesh)) return;
+                (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => materials.add(m));
+                geometries.add(o.geometry);
             });
-            group.remove(old);
+            materials.forEach(m => m.dispose());
+            geometries.forEach(g => g.dispose());
             this.plotCrops[index] = null;
         }
 
@@ -524,6 +532,7 @@ export class FarmScene {
         });
         this.dropGeo.dispose();
         this.houseTexCache.forEach(t => t.dispose());
+        this.cropTexCache.forEach(t => t.dispose());
         this.clockTexture.dispose();
         this.scene.traverse(o => {
             if (o instanceof THREE.Mesh) {

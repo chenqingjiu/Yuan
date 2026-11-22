@@ -211,7 +211,7 @@ export default function FarmApp({ character, onBack }: { character?: CharacterPr
                     if (result.ok) {
                         setFarm(result.state);
                         setNow(Date.now());
-                        addToast(`收了${CROPS[plot.crop!].name} +${result.gained ?? 0}`);
+                        addToast(`收了${CROPS[plot.crop!].name}，+${result.gained ?? 0} 币`);
                     }
                     busyRef.current = false;
                     setBusy(false);
@@ -354,7 +354,7 @@ export default function FarmApp({ character, onBack }: { character?: CharacterPr
                                 <div className={`text-[9px] mt-0.5 ${unlocked ? 'text-slate-500' : 'text-slate-400'}`}>
                                     {unlocked ? (
                                         <>
-                                            {def.seedCost} 币 · 卖 {def.price}
+                                            种子 {def.seedCost} · 收成 {def.price}
                                             {!affordable && ' · 钱不够'}
                                         </>
                                     ) : (
