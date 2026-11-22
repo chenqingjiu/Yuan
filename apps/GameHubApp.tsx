@@ -3,6 +3,7 @@ import { useOS } from '../context/OSContext';
 import DoudizhuApp from './games/DoudizhuApp';
 import BbqApp from './games/BbqApp';
 import FarmApp from './farm/FarmApp';
+import { ROUND_MIN } from '../utils/games/bbq/engine';
 
 /**
  * 游戏大厅（MyGame）—— 小游戏合集入口。
@@ -49,7 +50,7 @@ export default function GameHubApp() {
                                 <span className="w-11 h-11 rounded-xl bg-amber-600 flex items-center justify-center text-2xl shadow-sm">🔥</span>
                                 <div className="flex-1">
                                     <p className="text-[15px] font-black text-slate-800">夜市烧烤</p>
-                                    <p className="text-[11px] text-slate-500 mt-0.5">各守一摊 · 五分钟比营业额 · 互相捣乱</p>
+                                    <p className="text-[11px] text-slate-500 mt-0.5">各守一摊 · {ROUND_MIN} 分钟比营业额 · 互相捣乱</p>
                                 </div>
                                 <span className="text-slate-400">›</span>
                             </div>
@@ -66,7 +67,7 @@ export default function GameHubApp() {
                                 <span className="w-11 h-11 rounded-xl bg-lime-600 flex items-center justify-center text-2xl shadow-sm">🌱</span>
                                 <div className="flex-1">
                                     <p className="text-[15px] font-black text-slate-800">一块田</p>
-                                    <p className="text-[11px] text-slate-500 mt-0.5">四块地 · 种下去浇水 · 三分钟收一茬</p>
+                                    <p className="text-[11px] text-slate-500 mt-0.5">六块地 · 种下去浇水 · 三分钟收一茬</p>
                                 </div>
                                 <span className="text-slate-400">›</span>
                             </div>
