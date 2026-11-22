@@ -2,14 +2,15 @@ import React from 'react';
 import { useOS } from '../context/OSContext';
 import DoudizhuApp from './games/DoudizhuApp';
 import BbqApp from './games/BbqApp';
+import FarmApp from './farm/FarmApp';
 
 /**
  * 游戏大厅（MyGame）—— 小游戏合集入口。
  * 内置「斗地主」「夜市烧烤」，后续游戏注册表式扩展。
  */
 export default function GameHubApp() {
-    const { closeApp } = useOS();
-    const [active, setActive] = React.useState<'hub' | 'doudizhu' | 'bbq'>('hub');
+    const { closeApp, characters } = useOS();
+    const [active, setActive] = React.useState<'hub' | 'doudizhu' | 'bbq' | 'farm'>('hub');
 
     return (
         <div className="h-full w-full flex flex-col bg-slate-50 relative overflow-hidden">
@@ -59,6 +60,23 @@ export default function GameHubApp() {
                             </div>
                         </button>
 
+                        <button onClick={() => setActive('farm')}
+                            className="w-full p-4 rounded-2xl bg-gradient-to-br from-lime-50 to-green-50 border border-lime-200 text-left cursor-pointer hover:border-lime-400 transition-colors active:scale-[0.99]">
+                            <div className="flex items-center gap-3">
+                                <span className="w-11 h-11 rounded-xl bg-lime-600 flex items-center justify-center text-2xl shadow-sm">🌱</span>
+                                <div className="flex-1">
+                                    <p className="text-[15px] font-black text-slate-800">一块田</p>
+                                    <p className="text-[11px] text-slate-500 mt-0.5">四块地 · 种下去浇水 · 三分钟收一茬</p>
+                                </div>
+                                <span className="text-slate-400">›</span>
+                            </div>
+                            <div className="flex gap-2 mt-2">
+                                <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/70 text-slate-500">3D 院子</span>
+                                <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/70 text-slate-500">小人干活</span>
+                                <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/70 text-slate-500">离线也长</span>
+                            </div>
+                        </button>
+
                         <div className="w-full p-4 rounded-2xl bg-slate-100 border border-slate-200 opacity-60">
                             <div className="flex items-center gap-3">
                                 <span className="w-11 h-11 rounded-xl bg-slate-300 flex items-center justify-center text-2xl">⚔️</span>
@@ -72,8 +90,10 @@ export default function GameHubApp() {
                 </>
             ) : active === 'doudizhu' ? (
                 <DoudizhuApp onBack={() => setActive('hub')} />
-            ) : (
+            ) : active === 'bbq' ? (
                 <BbqApp onBack={() => setActive('hub')} />
+            ) : (
+                <FarmApp character={characters[0]} onBack={() => setActive('hub')} />
             )}
         </div>
     );
