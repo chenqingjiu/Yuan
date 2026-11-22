@@ -48,6 +48,7 @@ export function pageBuildMetadataPlugin(metadata: PageBuildMetadata): Plugin {
           commit: metadata.commit,
           label,
           time: metadata.time,
+          buildId: metadata.buildId,
         }, null, 2) + '\n',
       });
     },
