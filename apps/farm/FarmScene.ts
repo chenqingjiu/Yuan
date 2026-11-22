@@ -98,13 +98,29 @@ export class FarmScene {
     /** 角色站位（地面上的 xy），转身也在这层 */
     private actorPivot = new THREE.Group();
     /**
-     * 腰关节：弯腰要绕腰转，不是绕脚底转。
-     * 绕脚底转相当于把整个人当一根杆子往前推倒，头会几乎贴到地面，
-     * 这也是之前「动作僵硬」的主要来源。
+     * 角色容器。以前这里当成「腰关节」绕腰旋转来假装弯腰，结果腿一步不动、
+     * 整个人还被抬到半空。现在弯腰下蹲全交给骨骼（blankMotion 的 farm 姿势），
+     * 这层只负责把角色摆到站位上。
      */
     private waist = new THREE.Group();
-    /** 腰的高度（世界单位，角色总高约 1.3） */
-    private hipY = 0.62;
+    /**
+     * 房间里的 chibi 是「小人国」尺寸（200%），直接搬进农场头比房子还大。
+     * 按站立包围盒缩到正常个头，比例才和房子、田地对得上。
+     */
+    private actorScale = 1;
+    /** 缩放后的实际身高（米），顶点弯曲要用腰高和头顶高度 */
+    private actorH = 1.36;
+    /**
+     * chibi-body 自己的顶端高度。整组包围盒会被头发和辅助件撑高
+     * （实测 1.20 vs 身体 1.09），拿整组高度算折角分布，t 永远到不了 1，
+     * 弯到一半就停了 —— 这就是第一版「弯了但看不出来」的原因。
+     */
+    private bodyTopY = 1.09;
+    /** 当前蹲深 0~1，喂给骨骼的 farm 姿势 */
+    private farmDepth = 0;
+    private farmDepthTarget = 0;
+    /** 顶点弯曲的当前折角（弧度） */
+    private bend = 0;
     private actorHome = new THREE.Vector3(-3.35, 0, 0.85);
     private moveTarget: THREE.Vector3 | null = null;
     private moveSpeed = 1.7;
@@ -114,11 +130,6 @@ export class FarmScene {
     private faceTarget: number | null = null;
     /** 到了地方之后慢慢转过去的朝向（直接赋值会「啪」地一下转身） */
     private facingWant: number | null = null;
-    private lean = 0;
-    private leanTarget = 0;
-    /** 蹲下去的压缩量：以脚底为原点压短一点，脚不会陷进地里 */
-    private squat = 0;
-    private squatTarget = 0;
     private actionUntil = 0;
     private actionKind: 'idle' | 'water' | 'plant' | 'harvest' = 'idle';
     private blinkUntil = 0;
@@ -160,10 +171,9 @@ export class FarmScene {
 
         this.scene.add(this.houseGroup);
         this.actorPivot.position.copy(this.actorHome);
-        this.waist.position.y = this.hipY;
         this.actorPivot.add(this.waist);
         this.scene.add(this.actorPivot);
-        this.actorShadow = this.blob(0.86, 0.86, this.actorHome.x, 0.012, this.actorHome.z);
+        this.actorShadow = this.blob(0.58, 0.58, this.actorHome.x, 0.012, this.actorHome.z);
 
         this.resize();
         this.bindPointer();
@@ -549,6 +559,88 @@ export class FarmScene {
 
     // ---------------------------------------------------------------- 角色
 
+    /**
+     * 顶点弯曲。
+     *
+     * 这个 chibi 的 classic 体型是一整套**静态** FBX 网格（没有蒙皮、没有骨骼），
+     * 所以 blankMotion 里那套关节角度对它完全无效——之前怎么调「弯腰」都一动不动，
+     * 根源就在这里。想让她的样子不变又能弯下去，只剩一条路：在 GPU 上按高度把网格折一下。
+     *
+     * 做法是接管 project_vertex 之后的 gl_Position：把顶点换到世界空间，
+     * 按「离地高度」算一个二次分布的折角（腰处 0、头顶最大），绕腰前折，
+     * 再投影。所有头发 / 身体 / 手共用同一组 uniform，接缝不会错开。
+     */
+    private bendU = {
+        uBend: { value: 0 },
+        uHip: { value: 0.6 },
+        uTop: { value: 1.36 },
+        uOrigin: { value: new THREE.Vector3() },
+        uRight: { value: new THREE.Vector3(1, 0, 0) },
+        uForward: { value: new THREE.Vector3(0, 0, 1) },
+    };
+    private bentMaterials = new Set<THREE.Material>();
+
+    private installBend(root: THREE.Object3D) {
+        root.traverse((o) => {
+            const mesh = o as THREE.Mesh;
+            if (!mesh.isMesh) return;
+            const list = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+            for (const mat of list) {
+                if (!mat || this.bentMaterials.has(mat)) continue;
+                this.bentMaterials.add(mat);
+                const u = this.bendU;
+                mat.onBeforeCompile = (shader) => {
+                    shader.uniforms.uBend = u.uBend;
+                    shader.uniforms.uHip = u.uHip;
+                    shader.uniforms.uTop = u.uTop;
+                    shader.uniforms.uOrigin = u.uOrigin;
+                    shader.uniforms.uRight = u.uRight;
+                    shader.uniforms.uForward = u.uForward;
+                    shader.vertexShader = shader.vertexShader
+                        .replace(
+                            '#include <common>',
+                            `#include <common>
+                            uniform float uBend; uniform float uHip; uniform float uTop;
+                            uniform vec3 uOrigin; uniform vec3 uRight; uniform vec3 uForward;`,
+                        )
+                        .replace(
+                            '#include <project_vertex>',
+                            `#include <project_vertex>
+                            if (uBend > 0.0005) {
+                                vec3 pw = (modelMatrix * vec4(transformed, 1.0)).xyz - uOrigin;
+                                vec3 pl = vec3(dot(pw, uRight), pw.y, dot(pw, uForward));
+                                float t = clamp((pl.y - uHip) / max(0.001, uTop - uHip), 0.0, 1.0);
+                                // 二次分布：腰不动、越往上折得越多，弯出来是弧线不是折角
+                                float a = uBend * t * t;
+                                float sa = sin(a), ca = cos(a);
+                                float dy = pl.y - uHip;
+                                float dz = pl.z;
+                                pl.y = uHip + dy * ca - dz * sa;
+                                pl.z = dy * sa + dz * ca;
+                                pw = uOrigin + uRight * pl.x + vec3(0.0, 1.0, 0.0) * pl.y + uForward * pl.z;
+                                gl_Position = projectionMatrix * viewMatrix * vec4(pw, 1.0);
+                            }`,
+                        );
+                };
+                // 换过 shader 的材质必须有自己的程序缓存键，否则会复用未注入的版本
+                mat.customProgramCacheKey = () => 'farm-bend';
+                mat.needsUpdate = true;
+            }
+        });
+    }
+
+    /** 每帧把弯曲参数同步给 shader：折角、腰高、以及角色当前朝向 */
+    private updateBend(bend: number) {
+        const u = this.bendU;
+        u.uBend.value = bend;
+        u.uHip.value = this.bodyTopY * 0.42;
+        u.uTop.value = this.bodyTopY;
+        u.uOrigin.value.copy(this.actorPivot.position);
+        const f = this.facing;
+        u.uRight.value.set(Math.cos(f), 0, -Math.sin(f));
+        u.uForward.value.set(Math.sin(f), 0, Math.cos(f));
+    }
+
     async setActor(parts: Parts, hair?: HairSettings) {
         if (this.disposed) return;
         const visitor = await createVisitor(parts, hair);
@@ -569,7 +661,27 @@ export class FarmScene {
         visitor.root.position.set(0, 0, 0);
         visitor.root.rotation.y = 0;
         this.waist.add(visitor.root);
-        this.moveSpeed = Math.max(1.6, visitor.walkSpeed * 1.15);
+        // 房间里是 200% 的「小人国」尺寸，搬进农场头比房子还大。
+        // 按站立包围盒缩到 1.36 米，和门、地块的比例才对得上。
+        visitor.root.updateMatrixWorld(true);
+        const box = new THREE.Box3().setFromObject(visitor.root);
+        const h = Math.max(0.2, box.max.y - Math.min(0, box.min.y));
+        this.actorScale = Math.max(0.2, Math.min(1.2, 1.36 / h));
+        visitor.root.scale.setScalar(this.actorScale);
+        this.moveSpeed = Math.max(0.9, visitor.walkSpeed * this.actorScale * 1.1);
+        if (this.actorShadow) this.actorShadow.scale.setScalar(this.actorScale * 1.5);
+        this.actorH = h * this.actorScale;
+        let bodyTop = 0;
+        visitor.root.traverse((o) => {
+            const m = o as THREE.Mesh;
+            if (m.isMesh && m.name === 'chibi-body') {
+                bodyTop = Math.max(bodyTop, new THREE.Box3().setFromObject(m).max.y);
+            }
+        });
+        this.bodyTopY = bodyTop > 0.2 ? bodyTop : this.actorH;
+        // classic 体型没有蒙皮，弯腰只能靠顶点弯曲；blank 体型有骨骼，直接走关节
+        this.bentMaterials.clear();
+        if (!visitor.rig) this.installBend(visitor.root);
     }
 
     setPlaceholderActor() {
@@ -600,7 +712,7 @@ export class FarmScene {
         if (!group) return;
         const target = group.position.clone();
         // 站得离地近一点：0.78 时人在一米开外弯腰，够不着地，像远远地鞠了个躬
-        target.z += PLOT_SIZE * 0.56;
+        target.z += PLOT_SIZE * 0.52;
         target.y = 0;
         this.faceTarget = Math.atan2(group.position.x - target.x, group.position.z - target.z);
         this.walkTo(target, onArrive);
@@ -625,24 +737,21 @@ export class FarmScene {
     }
 
     /**
-     * 干活：弯腰 + 蹲下一点。
-     * 骨骼动画是现成的（water / cook），但身体前倾要另外给，
-     * 否则看起来是「站得笔直、手上洒水」。
+     * 干活：蹲下去 + 弯腰，全部由骨骼完成。
+     * 之前是外层转角度假装的，腿不动、脚还被抬起来，所以又飘又僵。
      */
     playAction(kind: 'water' | 'plant' | 'harvest', durationMs = 1800) {
         this.actionKind = kind;
         this.actionUntil = this.elapsed + durationMs / 1000;
         if (kind === 'water') {
-            this.leanTarget = 0.20;
-            this.squatTarget = 0.10;
+            // 浇水站着稍微弯一点就够
+            this.farmDepthTarget = 0.55;
             this.spawnDrops();
         } else if (kind === 'plant') {
             // 种植要蹲到接近地面
-            this.leanTarget = 0.24;
-            this.squatTarget = 0.18;
+            this.farmDepthTarget = 1;
         } else {
-            this.leanTarget = 0.22;
-            this.squatTarget = 0.16;
+            this.farmDepthTarget = 0.85;
         }
     }
 
@@ -691,7 +800,7 @@ export class FarmScene {
         this.camera.aspect = aspect;
 
         // 按「至少要看到多宽」反推机位：横屏刚好，竖屏会拉远（提示用户横过来）
-        const needWidth = 12.2;
+        const needWidth = 5.4;
         const vFov = (this.camera.fov * Math.PI) / 180;
         const hFov = 2 * Math.atan(Math.tan(vFov / 2) * aspect);
         const byWidth = needWidth / 2 / Math.tan(hFov / 2);
@@ -839,36 +948,26 @@ export class FarmScene {
         // 动作结束，直起身
         if (this.actionKind !== 'idle' && this.elapsed > this.actionUntil) {
             this.actionKind = 'idle';
-            this.leanTarget = 0;
-            this.squatTarget = 0;
+            this.farmDepthTarget = 0;
         }
 
-        // 弯腰分三层：
-        //   1) 绕腰转（不是绕脚底）—— 上身前折，不是把人当杆子推倒
-        //   2) 压短一点（脚底为原点）—— 有蹲下去的意思，脚还在地面上
-        //   3) 腰往前挪一点 —— 抵消绕腰转把脚甩到身后的位移
-        // 之前只有「绕脚底 + 大角度」，所以看上去像整个人向前倒。
-        this.lean += (this.leanTarget - this.lean) * Math.min(1, dt * 6);
-        this.squat += (this.squatTarget - this.squat) * Math.min(1, dt * 8);
-        // 干活时叠一点发力的节奏，否则 1.7 秒定在那里像暂停画面
-        const beat =
-            this.actionKind === 'idle'
-                ? 0
-                : Math.abs(Math.sin(this.elapsed * (this.actionKind === 'plant' ? 4.2 : 3.2))) * 0.05;
-        const bend = this.lean + beat;
-        this.waist.rotation.x = bend;
-        this.waist.position.y = this.hipY;
-        this.waist.position.z = this.hipY * Math.sin(bend) * 0.55;
+        // 蹲深：平滑过渡，别再一帧跳到位
+        this.farmDepth += (this.farmDepthTarget - this.farmDepth) * Math.min(1, dt * 7);
 
         // 骨骼动画
         if (this.actor) {
             const moving = !!this.moveTarget;
             const motion = this.actionKind !== 'idle' ? 'water' : moving ? 'walk' : 'idle';
-            // 头身比接近 1:1 的角色，一低头整颗头就把身体盖住了，
-            // 看上去像「头栽进地里」。弯腰时把下巴抬回来，只让身体前探。
+            // 干活时叠一点发力的节奏，否则 1.7 秒定在那里像暂停画面
+            const beat =
+                this.actionKind === 'idle'
+                    ? 0
+                    : Math.abs(Math.sin(this.elapsed * (this.actionKind === 'plant' ? 4.4 : 3.4))) * 0.14;
+            const depth = Math.min(1, this.farmDepth + beat);
+            // 有骨骼的体型直接在关节上弯；静态模型交给顶点弯曲
             const act =
-                this.actionKind !== 'idle'
-                    ? { kind: 'farm', hands: [] as number[][], socialHead: [-0.32, 0, 0] }
+                this.actor.rig && depth > 0.02
+                    ? { kind: 'farm', hands: [] as number[][], petCrouch: depth }
                     : undefined;
             this.actor.animate(this.elapsed, motion, 'standing', act);
             if (this.elapsed < this.blinkUntil) {
@@ -876,9 +975,18 @@ export class FarmScene {
             }
         }
 
-        // 压短放在骨骼动画之后：animate 每帧会重置根节点变换，放前面会被抹掉
+        // 缩放放在骨骼动画之后：animate 每帧会重置根节点变换，放前面会被抹掉
         const body = (this.actor?.root ?? this.placeholder) as THREE.Object3D | null;
-        if (body) body.scale.y = 1 - this.squat;
+        if (body) body.scale.setScalar(this.actorScale);
+
+        // 弯腰折角：种植最深，收割次之，浇水只要稍微前倾。
+        // 走路时给一点点前倾，别像根柱子平移过去。
+        const targetBend = this.actionKind === 'plant' ? 0.72
+            : this.actionKind === 'harvest' ? 0.62
+            : this.actionKind === 'water' ? 0.42
+            : this.moveTarget ? 0.08 : 0;
+        this.bend += (targetBend - this.bend) * Math.min(1, dt * 7);
+        this.updateBend(this.bend);
     }
 
     private stepDrops(dt: number) {

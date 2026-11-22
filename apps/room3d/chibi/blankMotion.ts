@@ -227,6 +227,29 @@ export function createBlankMotion(rig:ReturnType<typeof bindBlankBody>,body:T.Gr
    position.lerp(offset,weight);rotation.slerp(new T.Quaternion(),weight);
    for(const side of ['L','R']as const){rig.setHandCurl(side,imported==='coffee-drink'?.4:.12,targets);constrainForearmTwist(rig,targets,side);}
   }
+  if(activity?.kind==='farm'&&!seated&&!lying){
+   // 农活：真蹲下去——大腿前折、小腿回折、脊柱前探、双手落到地面附近。
+   // 以前 FarmScene 是拿外层 Group 绕腰旋转来「假装弯腰」，腿一点没动，
+   // 而且外层一抬高整个人就悬空，看着像往前飘。这里改成骨骼自己蹲。
+   const k=Math.max(0,Math.min(1,activity.petCrouch??0));
+   if(k>0){
+    for(const [sign,side]of [[1,'L'],[-1,'R']]as const){
+     // 腿只屈一点：农活是弯腰，不是蹲茅坑
+     angle(side+'_thigh',-.55*k,0,-sign*.04*k);
+     angle(side+'_shin',.95*k);
+     angle(side+'_foot',-.38*k);
+     // 手臂往身体前下方伸，手落在膝盖以下，看着像在够地
+     angle(side+'_upperArm',-.30-.52*k,-sign*.22*k,-sign*(1.25-.42*k));
+     angle(side+'_forearm',0,-sign*(.08+.78*k),-sign*.07);
+     angle(side+'_hand',.18*k,0,sign*.05);
+     rig.setHandCurl(side,.14+.46*k,targets);
+    }
+    // 上身大角度前折才是「弯腰」；只压腿会变成蹲着发呆
+    angle('spine',.98*k);angle('chest',.26*k);
+    // 头身比接近 1:1，一低头整颗头就埋进地里——折得越深越要把下巴抬回来
+    angle('head',.025-.58*k);
+   }
+  }
   if(activity?.kind==='pet-contact'){
    const crouch=activity.petCrouch??0;
    if(crouch>0){
@@ -240,7 +263,7 @@ export function createBlankMotion(rig:ReturnType<typeof bindBlankBody>,body:T.Gr
   const footwear=body.userData.wardrobeLift as {height:number;applied:number}|undefined;
   if(footwear){const lift=lying&&!bed?0:footwear.height*(1-seatWeight);position.y+=lift;footwear.applied=T.MathUtils.lerp(footwear.applied,lift,blend);}
   body.position.lerp(position,blend);body.quaternion.slerp(rotation,blend);
-  if(activity?.kind==='pet-contact'||importedWalk||bed&&Math.abs(activity.bedStep??0)>0||imported&&['dress-once','coffee-drink','wave-alternate-1','wave-alternate-2'].includes(imported)){
+  if(activity?.kind==='farm'||activity?.kind==='pet-contact'||importedWalk||bed&&Math.abs(activity.bedStep??0)>0||imported&&['dress-once','coffee-drink','wave-alternate-1','wave-alternate-2'].includes(imported)){
    // The source avatar's dimensions/root translation are not ours. Keep the
    // lower ankle on our own standing plane; preserve the source leg rotations.
    body.updateWorldMatrix(true,true);
