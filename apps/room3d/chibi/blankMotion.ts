@@ -229,7 +229,7 @@ export function createBlankMotion(rig:ReturnType<typeof bindBlankBody>,body:T.Gr
   }
   if(activity?.kind==='farm'&&!seated&&!lying){
    // 农活：真蹲下去——大腿前折、小腿回折、脊柱前探、双手落到地面附近。
-   // 以前 FarmScene 是拿外层 Group 绕腰旋转来「假装弯腰」，腿一点没动，
+   // 以前农场那套是拿外层 Group 绕腰旋转来「假装弯腰」，腿一点没动，
    // 而且外层一抬高整个人就悬空，看着像往前飘。这里改成骨骼自己蹲。
    const k=Math.max(0,Math.min(1,activity.petCrouch??0));
    if(k>0){
