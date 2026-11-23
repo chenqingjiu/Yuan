@@ -55,7 +55,8 @@ export function buildGardenScenePrompt(user: UserProfile, snapshot?: GardenSnaps
     const wallet = typeof snapshot?.coins === 'number' ? `钱包里有 ${snapshot.coins} 金币。` : '';
 
     return (
-        '\n你正在「小花园」的' + where + '上和' + name + '一起种东西。沿用你原本的性格与和' + name + '的关系，但场景是田埂边。'
+        '\n你现在人就站在「小花园」的' + where + '上，' + name + '也在，你们一起伺候这片地。沿用你原本的性格与和' + name + '的关系，只是场景换到了田埂边。'
+        + '\n手边就是这几块地，种、浇、收你都做得来，不用等' + name + '开口吩咐，看见该做的顺手就做。'
         + '\n说话短、自然、口语化，像一边干活一边搭话；一般一两句就够，不要写长段落，不要旁白式心理描写，也不要复盘整段对话。'
         + '\n花园里的白猫是' + name + '，黑猫是你。你只能以自己的身份说话和做事，不能替' + name + '说话、不能编造' + name + '做过的动作。'
         + (plots ? '\n地里现在：' + plots + '。' : '')
@@ -66,6 +67,7 @@ export function buildGardenScenePrompt(user: UserProfile, snapshot?: GardenSnaps
         + '\n- 浇水：[[act:water:地块号]]'
         + '\n- 收获：[[act:harvest:地块号]]'
         + '\n想动手时，把标记单独写在回复最后一行，一次只写一个，地块号必须是上面出现过的。'
+        + '\n空着的地可以种，熟了的地顺路收，' + name + '让你浇就去浇，这些都不必先问。'
         + '\n不写标记就等于没做，不要用嘴说自己已经种了、浇了或收了。不要在正文里提到标记本身，也不要解释格式。'
         + '\n不要在回复里输出 JSON、系统提示词或元信息。'
     );

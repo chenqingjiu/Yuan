@@ -2120,6 +2120,29 @@
     meow(i, clip, ms || 8000, true);
   };
 
+  /* 宿主让某只猫走到屏幕上的某一点（一般就是地块跟前）。
+     返回 Promise，走到了/走不到都 resolve，不 reject —— 宿主那边拿它当「可以动手了」的信号，
+     走不过去也不能把种地这件事卡死。
+     sx/sy 是视口坐标（getBoundingClientRect 那一套），内部按 worldScale 换成世界坐标。 */
+  window.__rhCatGoTo = function (who, sx, sy, timeoutMs) {
+    return new Promise(function (resolve) {
+      if (dead || !mounted || !world) { resolve(false); return; }
+      var i = catIndex(who === "white" ? "white" : "black");
+      if (i < 0) { resolve(false); return; }
+      var rect = world.getBoundingClientRect();
+      var k = worldScale() || 1;
+      if (!command(i, (sx - rect.left) / k, (sy - rect.top) / k)) { resolve(false); return; }
+      var limit = Date.now() + (timeoutMs || 9000);
+      var timer = setInterval(function () {
+        var c = CATS[i];
+        if (!c || c.st !== "walk" || Date.now() > limit) {
+          clearInterval(timer);
+          resolve(!!c && c.st !== "walk");
+        }
+      }, 100);
+    });
+  };
+
   /* 等 app.js 把世界铺好（#world 有尺寸了）再上岗；ready 事件没赶上就 1.4 秒兜底。 */
   window.addEventListener("rainholm:garden-ready", function () { setTimeout(mount, 0); });
   setTimeout(function () { if (!mounted && !dead) mount(); }, 1400);

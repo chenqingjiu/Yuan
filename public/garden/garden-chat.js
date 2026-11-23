@@ -221,12 +221,36 @@
         }
     }
 
+    /* 地块在屏幕上的落脚点：站到地沿外一点，别踩在苗上 */
+    function plotSpot(plot) {
+        var hit = document.querySelector('.plot-hit[data-plot="' + plot + '"]');
+        if (!hit) return null;
+        var r = hit.getBoundingClientRect();
+        var world = document.getElementById('world');
+        var wb = world ? world.getBoundingClientRect() : null;
+        var y = r.bottom + 6;
+        if (wb) y = Math.min(y, wb.bottom - 10);
+        return { x: r.left + r.width / 2, y: y };
+    }
+
+    /* 先走过去，再动手。走不过去（隔着篱笆/没挂接口）也照做，
+       别让一件本来能成的事卡在走路上。 */
+    function walkTo(plot) {
+        var spot = plotSpot(plot);
+        var go = window.__rhCatGoTo;
+        if (!spot || typeof go !== 'function') return Promise.resolve(false);
+        var bail = new Promise(function (resolve) { setTimeout(resolve, 9500); });
+        try {
+            return Promise.race([go('black', spot.x, spot.y, 9000), bail]);
+        } catch (_) {
+            return Promise.resolve(false);
+        }
+    }
+
     /* ── 替 AI 动手 ───────────────────────────────────────────────────── */
-    function runAction(act) {
+    function doAct(act) {
         var g = window.RainholmGarden;
-        if (!act || !g) return;
         var plot = Number(act.plot);
-        if (!Number.isFinite(plot) || plot < 1) return;
         try {
             if (act.action === 'plant') g.plant(plot, act.seed === 'fantasy' ? 'fantasy' : 'common');
             else if (act.action === 'water') g.water(plot);
@@ -239,6 +263,13 @@
             });
             render();
         }
+    }
+
+    function runAction(act) {
+        if (!act || !window.RainholmGarden) return Promise.resolve();
+        var plot = Number(act.plot);
+        if (!Number.isFinite(plot) || plot < 1) return Promise.resolve();
+        return walkTo(plot).then(function () { doAct(act); });
     }
 
     /* ── 与宿主通信 ───────────────────────────────────────────────────── */
@@ -268,7 +299,10 @@
             return;
         }
         if (data.type === 'act') {
-            (data.actions || []).forEach(runAction);
+            /* 一笔一笔来：走路和动作都串起来，别让两笔抢同一个 revision */
+            (data.actions || []).reduce(function (chain, act) {
+                return chain.then(function () { return runAction(act); });
+            }, Promise.resolve());
             return;
         }
         if (data.type === 'error') {
