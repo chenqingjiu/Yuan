@@ -6,8 +6,16 @@ import type { Plugin, ResolvedConfig, Rollup } from 'vite';
 import type { StaticManifest } from '../worker/staticCache';
 import { workerBundleOptions } from './worker-bundle-options.mjs';
 
+/**
+ * 哪些产物进 Service Worker 的静态缓存清单。
+ *
+ * `version.json` 必须排除：它是「检查更新」用来问线上版本的探针，一旦被 SW
+ * 收进清单就会走 cache-first，读到的永远是这份构建自己的副本——线上明明有
+ * 新提交，界面却一直说「已是最新」。同理，更新清单 sullyos-update.json 和
+ * 两个 worker 包也不该被缓存。
+ */
 const resourceFile = (path: string) => /\.(?:html|js|css|json|webmanifest|png|jpe?g|webp|gif|svg|ico|woff2?|ttf|otf|wasm|task|glb|gltf|vrm|moc3|mp3|ogg|wav)$/i.test(path)
-  && !/^(?:sw-keep-alive\.js|sullyos-update\.json|amsg-|instant-worker)/.test(path);
+  && !/^(?:sw-keep-alive\.js|sullyos-update\.json|version\.json|amsg-|instant-worker)/.test(path);
 
 export interface Release { buildId: string; appVersion: string }
 

@@ -55,6 +55,9 @@ const VersionInfo: React.FC = () => {
             trackEvent('检查到新版本', { 目标: result.latest.label });
         } else if (result.status === 'up-to-date') {
             setUpdate('none');
+            // 没新版时也把线上那一份的 label 记下来：万一线上其实落后（部署没跑），
+            // 这里显示的就是线上真实版本，一眼能看出不是同一份构建。
+            setUpdateLabel(result.latest.label);
         } else {
             setUpdate('error');
         }
@@ -153,7 +156,7 @@ const VersionInfo: React.FC = () => {
             </div>
             {update === 'none' && (
                 <div className="text-[9px] font-mono text-emerald-500/80 tracking-normal normal-case">
-                    ✓ 已是最新版本
+                    ✓ 已是最新版本{updateLabel ? ` · 线上 ${updateLabel}` : ''}
                 </div>
             )}
             {update === 'available' && (
