@@ -296,9 +296,24 @@ export class FarmScene {
 
     private buildPlots() {
         const soil = this.loadTex(`${BASE}farm/ground-soil.png`, 'soil');
-        const soilMat = new THREE.MeshLambertMaterial({ map: soil });
-        const sideMat = new THREE.MeshLambertMaterial({ color: '#6f543a' });
-        const edgeMat = new THREE.MeshLambertMaterial({ color: '#8a7355' });
+        // 土块是「贴图 + 一点厚度」，和作物卡片同样的问题：只吃 0.47 的辐照度会发灰发脏。
+        // 用同张贴图做自发光把土色拉回来，侧面留一点明暗保证它还像个有厚度的土块。
+        const soilMat = new THREE.MeshLambertMaterial({
+            map: soil,
+            emissive: new THREE.Color('#ffffff'),
+            emissiveMap: soil,
+            emissiveIntensity: 0.7,
+        });
+        const sideMat = new THREE.MeshLambertMaterial({
+            color: '#6f543a',
+            emissive: new THREE.Color('#6f543a'),
+            emissiveIntensity: 0.55,
+        });
+        const edgeMat = new THREE.MeshLambertMaterial({
+            color: '#8a7355',
+            emissive: new THREE.Color('#8a7355'),
+            emissiveIntensity: 0.35,
+        });
 
         for (let i = 0; i < PLOT_COLS * PLOT_ROWS; i++) {
             const g = new THREE.Group();
@@ -383,7 +398,13 @@ export class FarmScene {
         const wallH = contentH * 0.46;
         const wall = new THREE.Mesh(
             new THREE.BoxGeometry(contentW * 0.8, wallH, 0.92),
-            new THREE.MeshLambertMaterial({ color: tone.wall }),
+            new THREE.MeshLambertMaterial({
+                color: tone.wall,
+                // 正面立面图现在是不吃光的 Basic（满亮度），墙体要是还按 0.47 的辐照度算，
+                // 侧面露出来会比正面暗一大截。补自发光把底色拉回接近原色，只留一点明暗转折。
+                emissive: new THREE.Color(tone.wall),
+                emissiveIntensity: 0.62,
+            }),
         );
         wall.position.set(0, baseY + wallH / 2, -0.46);
         wall.castShadow = true;
@@ -408,7 +429,7 @@ export class FarmScene {
                     flatShading: true,
                     // 棱柱侧面会被压暗，补一点自发光，别在房子左边留一块黑边
                     emissive: new THREE.Color(tone.roof),
-                    emissiveIntensity: 0.3,
+                    emissiveIntensity: 0.62,
                 }),
             );
             roof.position.set(0, baseY + wallH * 0.96, -0.54);
@@ -421,27 +442,38 @@ export class FarmScene {
         // 正面：你的立面图
         const face = new THREE.Mesh(
             new THREE.PlaneGeometry(canvasW, canvasH),
-            new THREE.MeshLambertMaterial({
-                map: this.houseTexFor(stage),
-                transparent: true,
-                alphaTest: 0.4,
-                side: THREE.DoubleSide,
-            }),
+            this.cardMat(this.houseTexFor(stage), 0.4),
         );
         face.position.set(0, canvasH / 2 + baseY, 0.02);
         this.houseGroup.add(face);
+    }
+
+    /**
+     * 卡片材质：作物、树、房子立面这些「美术已经把明暗画进图里」的贴图，一律不吃场景光照。
+     *
+     * 之前这里用 MeshLambertMaterial，问题是 Lambert 的漫反射要再乘 1/π，
+     * 半球光 1.15 + 平行光 1.45 算下来卡片只拿到 0.47 的辐照度（地面反而有 0.55），
+     * 贴图 210,149,64 的金黄麦子渲染成 138,100,43，黄→土褐，一眼就看出「发灰」。
+     * 更糟的是太阳在世界坐标上不动，相机左右各转 42° 时卡片法线跟着转，
+     * dotNL 从 0.44 掉到 0，同一株麦子换个角度还能再暗一半。
+     *
+     * 这类贴图本来就该照原样显示，所以用 Basic：贴图什么色，画面就是什么色，且跟视角无关。
+     * 立体感由地上的软影和 3D 土块/墙体提供，不靠给卡片打光。
+     */
+    private cardMat(tex: THREE.Texture, alphaTest = 0.42) {
+        return new THREE.MeshBasicMaterial({
+            map: tex,
+            transparent: true,
+            alphaTest,
+            side: THREE.DoubleSide,
+        });
     }
 
     /** 装饰：树、栅栏、灌木、石头、水井、干草堆。都是正面小卡片，缩小后看不出是纸片。 */
     /** 一张正面小卡片 + 一地软影。返回两个 mesh，装饰增删时整组摘掉。 */
     private addPropCard(name: string, x: number, z: number, h: number) {
         const tex = this.loadTex(`${BASE}farm/${name}`, name);
-        const mat = new THREE.MeshLambertMaterial({
-            map: tex,
-            transparent: true,
-            alphaTest: 0.42,
-            side: THREE.DoubleSide,
-        });
+        const mat = this.cardMat(tex, 0.42);
         const card = new THREE.Mesh(new THREE.PlaneGeometry(h, h), mat);
         card.position.set(x, h / 2, z);
         card.castShadow = false;
@@ -470,12 +502,7 @@ export class FarmScene {
         // 栅栏：沿后排横向排开，朝观众
         for (let i = 0; i < 5; i++) {
             const tex = this.loadTex(`${BASE}farm/prop-fence.png`, 'prop-fence.png');
-            const mat = new THREE.MeshLambertMaterial({
-                map: tex,
-                transparent: true,
-                alphaTest: 0.4,
-                side: THREE.DoubleSide,
-            });
+            const mat = this.cardMat(tex, 0.4);
             const seg = new THREE.Mesh(new THREE.PlaneGeometry(1.32, 1.32), mat);
             seg.position.set(-5.4 + i * 1.26, 0.66, -4.85);
             this.scene.add(seg);
@@ -557,12 +584,7 @@ export class FarmScene {
         const ratio = CROP_FRAME[key] ?? 0.9;
         const h = (STAGE_HEIGHT[stage] ?? 0.5) / ratio;
 
-        const mat = new THREE.MeshLambertMaterial({
-            map: tex,
-            transparent: true,
-            alphaTest: 0.45,
-            side: THREE.DoubleSide,
-        });
+        const mat = this.cardMat(tex, 0.45);
         const geoA = new THREE.PlaneGeometry(h, h);
         const geoB = new THREE.PlaneGeometry(h, h);
 
