@@ -28,6 +28,10 @@ export interface GardenSnapshot {
     scene?: 'garden' | 'greenhouse';
     coins?: number;
     plots?: GardenPlot[];
+    /** 在别人家做客（串门）；能力只剩浇水、送一棵、偷一颗 */
+    visit?: boolean;
+    /** 主人名字，宿主侧补上 */
+    visitHost?: string;
 }
 
 const STATE_LABEL: Record<string, string> = {
@@ -53,10 +57,15 @@ export function buildGardenScenePrompt(user: UserProfile, snapshot?: GardenSnaps
     const where = snapshot?.scene === 'greenhouse' ? '花房' : '菜地';
     const plots = describePlots(snapshot?.plots);
     const wallet = typeof snapshot?.coins === 'number' ? `钱包里有 ${snapshot.coins} 金币。` : '';
+    const guest = !!snapshot?.visit;
 
     return (
-        '\n你现在人就站在「小花园」的' + where + '上，' + name + '也在，你们一起伺候这片地。沿用你原本的性格与和' + name + '的关系，只是场景换到了田埂边。'
-        + '\n手边就是这几块地，种、浇、收你都做得来，不用等' + name + '开口吩咐，看见该做的顺手就做。'
+        guest
+            ? '\n你现在在「小花园」的' + where + '上，这是你自己的院子，' + name + '过来串门了。沿用你原本的性格与和' + name + '的关系，只是场景换到了田埂边。'
+            : '\n你现在人就站在「小花园」的' + where + '上，' + name + '也在，你们一起伺候这片地。沿用你原本的性格与和' + name + '的关系，只是场景换到了田埂边。'
+        + (guest
+            ? '\n' + name + '是客人：你陪他看看地，能浇水、能给他种一棵，但熟了的先留着，等他下次来一起收。'
+            : '\n手边就是这几块地，种、浇、收你都做得来，不用等' + name + '开口吩咐，看见该做的顺手就做。')
         + '\n说话短、自然、口语化，像一边干活一边搭话；一般一两句就够，不要写长段落，不要旁白式心理描写，也不要复盘整段对话。'
         + '\n花园里的白猫是' + name + '，黑猫是你。你只能以自己的身份说话和做事，不能替' + name + '说话、不能编造' + name + '做过的动作。'
         + (plots ? '\n地里现在：' + plots + '。' : '')

@@ -32,12 +32,16 @@ export default function GardenApp({ onBack }: { onBack: () => void }) {
         }
     });
     const [choosing, setChoosing] = React.useState(false);
+    /** 串门时填对方角色 id；null ＝ 在自己家 */
+    const [visitTo, setVisitTo] = React.useState<string | null>(null);
+    const [visitPick, setVisitPick] = React.useState(false);
     const frameRef = React.useRef<HTMLIFrameElement>(null);
     const busy = React.useRef(false);
     const abortRef = React.useRef<AbortController | null>(null);
 
+    const owner = visitTo || picked;
     const char: CharacterProfile | undefined =
-        characters.find(item => item.id === picked) || (characters.length === 1 ? characters[0] : undefined);
+        characters.find(item => item.id === owner) || (characters.length === 1 ? characters[0] : undefined);
 
     const pick = (id: string) => {
         try {
@@ -198,7 +202,9 @@ export default function GardenApp({ onBack }: { onBack: () => void }) {
         );
     }
 
-    const src = `${import.meta.env.BASE_URL}garden/index.html`;
+    const src =
+        `${import.meta.env.BASE_URL}garden/index.html?owner=${encodeURIComponent(owner || 'main')}` +
+        (visitTo ? '&visit=1' : '');
 
     return (
         <div className="relative h-full w-full bg-[#f7efe3] overflow-hidden">
@@ -231,7 +237,60 @@ export default function GardenApp({ onBack }: { onBack: () => void }) {
                     </svg>
                     离开
                 </button>
+
+                {visitTo ? (
+                    <button
+                        onClick={() => setVisitTo(null)}
+                        className="flex items-center gap-1 rounded-full bg-amber-100/90 backdrop-blur px-3 py-1.5 text-[12px] font-bold text-amber-900 shadow-sm border border-amber-300/70 active:scale-95 transition-transform"
+                    >
+                        回家
+                    </button>
+                ) : (
+                    characters.length > 1 && (
+                        <button
+                            onClick={() => setVisitPick(v => !v)}
+                            className="flex items-center gap-1 rounded-full bg-white/80 backdrop-blur px-3 py-1.5 text-[12px] font-bold text-amber-900 shadow-sm border border-amber-200/70 active:scale-95 transition-transform"
+                        >
+                            串门
+                        </button>
+                    )
+                )}
             </div>
+
+            {visitPick && !visitTo && (
+                <div
+                    className="absolute left-3 z-30 w-52 rounded-2xl bg-white/96 backdrop-blur p-2 shadow-lg border border-amber-200"
+                    style={{ top: 'calc(var(--safe-top, 0px) + 96px)' }}
+                >
+                    <p className="px-2 py-1 text-[11px] text-slate-500">去谁家看看</p>
+                    {characters
+                        .filter(item => item.id !== owner)
+                        .map(item => (
+                            <button
+                                key={item.id}
+                                onClick={() => {
+                                    setVisitPick(false);
+                                    setVisitTo(item.id);
+                                }}
+                                className="w-full text-left px-2 py-2 rounded-xl text-[13px] font-bold text-amber-900 active:bg-amber-50"
+                            >
+                                {item.name}
+                            </button>
+                        ))}
+                    {characters.filter(item => item.id !== owner).length === 0 && (
+                        <p className="px-2 py-2 text-[12px] text-slate-400">就一个人，没地方串门</p>
+                    )}
+                </div>
+            )}
+
+            {visitTo && (
+                <div
+                    className="absolute left-1/2 -translate-x-1/2 z-20 rounded-full bg-white/85 backdrop-blur px-3 py-1 text-[11px] font-bold text-amber-800 shadow-sm border border-amber-200/70 whitespace-nowrap"
+                    style={{ top: 'calc(var(--safe-top, 0px) + 8px)' }}
+                >
+                    在 {char?.name || '对方'} 家做客 · 只能浇水、送一棵、偷一颗
+                </div>
+            )}
         </div>
     );
 }

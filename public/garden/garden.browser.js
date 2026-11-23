@@ -44,6 +44,7 @@ var SEASON_LENGTH_TICKS = 108;
 var STARTING_COINS = 200;
 var STARTER_POTIONS = 6;
 var STEAL_COOLDOWN_MS = 60 * 60 * 1e3;
+var STEAL_DAILY_CAP = 3;
 var STEAL_SHIELD_MS = 30 * 60 * 1e3;
 var POTION_DROP_CHANCE = 0.05;
 var SEED_PRICE = { common: 8, fantasy: 40 };
@@ -71,6 +72,7 @@ var SEASON_EVENT_CHANCE = 0.1;
 var SEASON_EVENT_COOLDOWN_MS = 2 * 60 * 60 * 1e3;
 var RECORD_CHANCE = 0.03;
 var MAX_LOG = 30;
+var TRAIL_MAX = 30;
 var MAX_BODY_BYTES = 16 * 1024;
 
 // vendor/aifarm/content/crops.json
@@ -6239,6 +6241,11 @@ function pushLog(farm, msg) {
   if (farm.log.length > MAX_LOG)
     farm.log.splice(0, farm.log.length - MAX_LOG);
 }
+function pushTrail(farm, ev) {
+  (farm.trail ??= []).unshift(ev);
+  if (farm.trail.length > TRAIL_MAX)
+    farm.trail.length = TRAIL_MAX;
+}
 function advance(farm, now) {
   const elapsed = Math.floor((now - farm.lastTickAt) / TICK_MS);
   if (elapsed <= 0)
@@ -6345,6 +6352,34 @@ function water(farm, plotId, by, isOwner) {
   pushLog(farm, `${by}给 ${plotId} 号地浇了水`);
   return { ok: true, by, isOwner, capped };
 }
+var remainingTicks = (c) => c.growTicks - c.progress;
+function visitorWater(farm, visitorId, plotId, by, now) {
+  const day = currentDayIndex(now);
+  if (farm.waterVisits?.[visitorId] === day)
+    return { ok: false, error: "已浇过水，明天再来吧。" };
+  let plot;
+  if (plotId != null) {
+    plot = farm.plots.find((p) => p.id === plotId);
+    if (!plot || !plot.crop)
+      return { ok: false, error: `${plotId} 号地没有作物` };
+    if (plot.crop.ripe)
+      return { ok: false, error: `${plotId} 号地的作物已经熟了，浇了也没用` };
+  } else {
+    const growing = farm.plots.filter((p) => p.crop && !p.crop.ripe);
+    if (!growing.length)
+      return { ok: false, error: "对方没有可浇水的作物" };
+    plot = growing.reduce((best, p) => remainingTicks(p.crop) < remainingTicks(best.crop) ? p : best);
+  }
+  const crop = plot.crop;
+  crop.progress = Math.min(crop.growTicks, crop.progress + 1);
+  const ripened = crop.progress >= crop.growTicks;
+  if (ripened)
+    crop.ripe = true;
+  (farm.waterVisits ??= {})[visitorId] = day;
+  pushLog(farm, `${by}帮 ${plot.id} 号地浇水，加速 30 分钟${ripened ? "，正好催熟" : ""}`);
+  pushTrail(farm, { t: now, kind: "watered", by, plotId: plot.id });
+  return { ok: true, plotId: plot.id, ripened };
+}
 function qualityTierFromName(name) {
   if (name.includes("优"))
     return 3;
@@ -6436,6 +6471,33 @@ function harvest(farm, plotId, now, seasonMod) {
   onTaskEvent(farm, "harvest", now, { rarity: crop.rarity, isNew, isUgc: crop.category === "ugc" });
   pushLog(farm, `收获 ${crop.name}（${quality.name}），+${value}${drop ? ` 掉素材[${drop.name}]` : ""}${potionDrop ? " 掉药水" : ""}`);
   return { ok: true, crop, quality, value, isNew, codexReward, bonus, drop, potionDrop };
+}
+function stealQuota(farm, now) {
+  const day = currentDayIndex(now);
+  if (!farm.stealQuota || farm.stealQuota.day !== day)
+    farm.stealQuota = { day, n: 0 };
+  return farm.stealQuota;
+}
+var fmtStealRemain = (ms) => {
+  const min = Math.max(1, Math.ceil(ms / 6e4));
+  return min >= 60 ? `${Math.ceil(min / 60)}小时` : `${min}分钟`;
+};
+function stealAvailability(thief, now) {
+  if (!thief)
+    return { ok: true, left: STEAL_DAILY_CAP };
+  const q = stealQuota(thief, now);
+  if ((q.n ?? 0) >= STEAL_DAILY_CAP)
+    return { ok: false, reason: `今天已经偷满 ${STEAL_DAILY_CAP} 次了，明天再出门吧。` };
+  const leftMs = q.lastAt ? q.lastAt + STEAL_COOLDOWN_MS - now : 0;
+  if (leftMs > 0)
+    return { ok: false, reason: `刚偷过菜，先歇一会儿，约 ${fmtStealRemain(leftMs)} 后再来。` };
+  return { ok: true, left: STEAL_DAILY_CAP - (q.n ?? 0) };
+}
+function canStealNow(thief, now) {
+  return stealAvailability(thief, now).ok;
+}
+function stealShieldRemain(victim, now) {
+  return Math.max(0, (victim.stealShieldUntil ?? 0) - now);
 }
 function animalUnlocked(farm, kind) {
   return officialCodexCount(farm) >= kind.unlockCodex;
@@ -7064,12 +7126,20 @@ export {
   GREENHOUSE_PLOTS,
   SCENES,
   SceneService,
+  advance,
+  canStealNow,
   checkRuleDrift,
   createSceneApiHandler,
   ensureScenes,
   gardenView,
   greenhouseView,
+  harvest,
   mergeActors,
   newRecord,
-  pickFlower
+  pickFlower,
+  plant,
+  pushTrail,
+  stealShieldRemain,
+  visitorWater,
+  water
 };

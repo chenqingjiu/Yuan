@@ -214,7 +214,9 @@
             return {
                 scene: scene,
                 coins: Number.isFinite(coins) ? coins : undefined,
-                plots: plots
+                plots: plots,
+                /* visit1123：在别人家做客，能力边界和在自己家不一样 */
+                visit: new URLSearchParams(location.search).get('visit') === '1'
             };
         } catch (_) {
             return undefined;

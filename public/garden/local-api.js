@@ -1,6 +1,15 @@
 /* 本地存档层：把服务端的 api/state 与 api/action 换成本地实现。
    引擎用的是同一份 SceneService，规则不会漂。存档落在 IndexedDB。 */
-import { SceneService, ensureScenes, newRecord } from "./garden.browser.js";
+import {
+    SceneService,
+    ensureScenes,
+    newRecord,
+    gardenView,
+    advance,
+    plant,
+    visitorWater,
+    pushTrail,
+} from "./garden.browser.js?v=visit1123-v1";
 
 /* 兜底：局域网 http 访问时 crypto.randomUUID 可能不存在（非安全上下文），
    而 app.js 拿它当幂等号，缺了会直接种不了地。 */
@@ -25,10 +34,18 @@ import { SceneService, ensureScenes, newRecord } from "./garden.browser.js";
 })();
 
 const DB_NAME = "rainholm-garden-local";
-const DB_VER = 1;
+const DB_VER = 2;
 const STORE = "save";
-const KEY = "main";
-const SAVE_VER = 1;
+const SAVE_VER = 2;
+
+/* visit1123：一个角色一块地。
+   ?owner=<角色id> 决定开谁的院子；?visit=1 表示这是去别人家做客。
+   没有参数时退回老键 "main"，老存档照常能读。 */
+const QUERY = new URLSearchParams(location.search);
+const RAW_OWNER = QUERY.get("owner") || "";
+const OWNER = /^[A-Za-z0-9_-]{1,64}$/.test(RAW_OWNER) ? RAW_OWNER : "main";
+const VISIT = QUERY.get("visit") === "1";
+const KEY = OWNER;
 
 function openDB() {
     return new Promise((resolve, reject) => {
@@ -41,12 +58,12 @@ function openDB() {
     });
 }
 
-async function readRaw() {
+async function readRaw(key) {
     const db = await openDB();
     try {
         return await new Promise((resolve, reject) => {
             const tx = db.transaction(STORE, "readonly");
-            const q = tx.objectStore(STORE).get(KEY);
+            const q = tx.objectStore(STORE).get(key || KEY);
             q.onsuccess = () => resolve(q.result ?? null);
             q.onerror = () => reject(q.error);
         });
@@ -100,6 +117,16 @@ ready = (async () => {
     } catch (e) {
         console.warn("[garden] 读存档失败，从头开始", e);
     }
+    /* 单花园时代只有 "main" 这一份：新角色第一次进来时把它接过来，别让攒的地白种 */
+    if (!raw?.record?.farm && KEY !== "main") {
+        try {
+            const legacy = await readRaw("main");
+            if (legacy?.record?.farm) {
+                raw = legacy;
+                console.info("[garden] 已把旧存档接管到 " + KEY);
+            }
+        } catch (_) { }
+    }
     if (raw?.record?.farm) {
         record = raw.record;
     } else {
@@ -114,6 +141,53 @@ const json = (body, status = 200) =>
         status,
         headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" },
     });
+
+/* ── 串门 ────────────────────────────────────────────────────────────────
+   在别人家：能帮浇水（真 +1 tick）、能送一棵（不花他的钱）、能偷一颗留个痕迹，
+   但收不了他的菜，也偷不走实物 —— 本地只有你一个人，偷来偷去都是自己的东西。 */
+function visitAction(body, key) {
+    const now = Date.now();
+    if (body.revision !== record.revision) {
+        return { ok: false, status: 409, error: "这边刚有变化，已经帮你刷新", state: gardenView(record, now) };
+    }
+    if (advance(record.farm, now) > 0) record.revision++;
+    record.farm.coins = record.wallet;
+    const farm = record.farm;
+    const plotId = Number(body.plotId);
+
+    if (body.action === "water") {
+        const r = visitorWater(farm, "local-visitor", plotId, "你", now);
+        if (!r.ok) return { ok: false, status: 400, error: r.error, state: gardenView(record, now) };
+        record.revision++;
+        scheduleSave();
+        return { ok: true, state: gardenView(record, now), note: r.ripened ? "正好催熟了" : "替他浇了水" };
+    }
+
+    if (body.action === "plant") {
+        const seedType = body.seedType === "fantasy" ? "fantasy" : "common";
+        const before = farm.coins;
+        const r = plant(farm, plotId, seedType, undefined, now);
+        if (!r.ok) return { ok: false, status: 400, error: r.error, state: gardenView(record, now) };
+        farm.coins = before;                       /* 送的不收他的种子钱 */
+        record.wallet = farm.coins;
+        pushTrail(farm, { t: now, kind: "gift", by: "你", plotId });
+        record.revision++;
+        scheduleSave();
+        return { ok: true, state: gardenView(record, now), note: "给他种下一棵" };
+    }
+
+    if (body.action === "harvest") {
+        const plot = farm.plots.find(p => p.id === plotId);
+        if (!plot || !plot.crop) return { ok: false, status: 400, error: plotId + " 号地没有作物", state: gardenView(record, now) };
+        if (!plot.crop.ripe) return { ok: false, status: 400, error: "还没熟，再等等", state: gardenView(record, now) };
+        pushTrail(farm, { t: now, kind: "stolen", by: "你", plotId });
+        record.revision++;
+        scheduleSave();
+        return { ok: false, status: 400, error: "你偷偷摸走一颗，他没发现——地里的还留着", state: gardenView(record, now) };
+    }
+
+    return { ok: false, status: 400, error: "在别人家只能浇水、送一棵、偷一颗", state: gardenView(record, now) };
+}
 
 const realFetch = window.fetch.bind(window);
 
@@ -165,6 +239,10 @@ window.fetch = async function (input, init) {
     const headers = new Headers(init?.headers || {});
     const key = headers.get("Idempotency-Key") || "";
     const scene = body.scene || "garden";
+    if (VISIT && scene === "garden") {
+        const result = await visitAction(body, key);
+        return json(result, result.status ?? 200);
+    }
     const result = await service.action("local", scene, body, key);
     return json(result, result.status ?? 200);
 };
