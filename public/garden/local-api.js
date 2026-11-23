@@ -347,9 +347,9 @@ function mountMenu() {
     const board = mk("留言板", () => (window.__rhGardenBoardOpen || window.__rhGardenBoard?.open)?.());
     board.dataset.rh = "board";
     menu.appendChild(board);
-    menu.appendChild(mk("导出存档", download));
-    menu.appendChild(mk("导入存档", pickFile));
-    menu.appendChild(mk("重置这个院子", resetGarden));
+
+    /* 原 nav 整个被 ui-refresh 换成了托盘，往里加的按钮用户看不见 ——
+       存档相关挪到留言板底部的细链接里，这里只留一个给托盘点的小影子。 */
 
     /* 原 nav 被 ui-refresh 换成了右侧托盘（#gdTray），它按固定清单建按钮，
        后加的项不会自己长出去 —— 这里给托盘补一颗影子，点它等于点原按钮。 */
@@ -362,13 +362,14 @@ function mountMenu() {
         trayItem.type = "button";
         trayItem.className = "gd-tray-item";
         trayItem.dataset.gdTarget = '#menu button[data-rh="board"]';
-        trayItem.style.setProperty("--i", 5);
         trayItem.setAttribute("aria-label", "留言板");
         trayItem.innerHTML =
             '<img src="assets/v2/note.webp" alt="" aria-hidden="true" draggable="false">' +
             '<span class="gd-lab" aria-hidden="true">留言板</span>';
         trayItem.addEventListener("click", () => board.click());
-        tray.appendChild(trayItem);
+        /* 排在「收获篮」后面：看留言是常事，别藏在最后一项 */
+        tray.insertBefore(trayItem, tray.children[2] || null);
+        trayItem.style.setProperty("--i", 2);
     };
     attachTray();
     if (!trayItem) setTimeout(attachTray, 900);
@@ -402,6 +403,13 @@ if (document.readyState === "loading") {
 } else {
     mountMenu();
 }
+
+/* 留言板底部那几个细链接用到 */
+window.__rhGardenSave = {
+    download,
+    pickFile,
+    reset: resetGarden,
+};
 
 window.addEventListener("pagehide", () => {
     clearTimeout(saveTimer);

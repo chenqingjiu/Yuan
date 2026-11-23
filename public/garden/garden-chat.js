@@ -117,7 +117,11 @@
         '#board-foot{flex:none;padding:10px 14px calc(12px + env(safe-area-inset-bottom,0px));border-top:1px dashed #e2d3b8;text-align:center}',
         '#board-run{border:1.5px solid #dcc9a8;background:#fff;color:#8a6540;font-size:12.5px;font-weight:800;',
         'border-radius:12px;padding:8px 16px;cursor:pointer;font-family:inherit}',
-        '#board-run:disabled{opacity:.5;cursor:default}'
+        '#board-run:disabled{opacity:.5;cursor:default}',
+        '#board-save{margin-top:9px;display:flex;gap:10px;justify-content:center}',
+        '#board-save button{border:0;background:transparent;color:#b09a7c;font-size:11px;padding:2px 0;cursor:pointer;font-family:inherit}',
+        '#board-save button:active{opacity:.55}',
+        '#board-save button[data-save="reset"]{color:#c08a7d}'
     ].join('');
     root.appendChild(boardStyle);
 
@@ -126,7 +130,10 @@
     board.innerHTML = '<div id="board-head"><h3>花园留言板</h3><small id="board-sub"></small>'
         + '<button id="board-close" type="button" aria-label="收起留言板">✕</button></div>'
         + '<div id="board-list"></div>'
-        + '<div id="board-foot"><button id="board-run" type="button">让 TA 现在巡一圈</button></div>';
+        + '<div id="board-foot"><button id="board-run" type="button">让 TA 现在巡一圈</button>'
+        + '<div id="board-save"><button type="button" data-save="export">导出存档</button>'
+        + '<button type="button" data-save="import">导入存档</button>'
+        + '<button type="button" data-save="reset">重置这个院子</button></div></div>';
     root.appendChild(board);
 
     var boardList = root.getElementById('board-list');
@@ -167,8 +174,24 @@
         }
     }
 
-    window.__rhGardenBoardOpen = function () { setBoard(true); };
+    window.__rhGardenBoardOpen = function () {
+        /* 面板一开就把工具托盘收掉，不然矮屏上最后几项会被面板压住 */
+        var menu = document.getElementById('menu');
+        if (menu) menu.hidden = true;
+        setBoard(true);
+    };
     root.getElementById('board-close').addEventListener('click', function () { setBoard(false); });
+
+    /* 存档那几件事原来挂在原生 nav 上，可 nav 早被托盘替换、整块是隐藏的 —— 挪到这儿才点得到 */
+    root.getElementById('board-save').addEventListener('click', function (e) {
+        var btn = e.target && e.target.closest ? e.target.closest('button') : null;
+        if (!btn) return;
+        var api = window.__rhGardenSave;
+        if (!api) return;
+        if (btn.dataset.save === 'export') api.download();
+        else if (btn.dataset.save === 'import') api.pickFile();
+        else if (btn.dataset.save === 'reset') api.reset();
+    });
 
     /* 不想等 8 小时的时候，按一下就能让 TA 现在去转一圈 */
     var runBtn = root.getElementById('board-run');
