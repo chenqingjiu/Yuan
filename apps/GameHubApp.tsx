@@ -2,15 +2,16 @@ import React from 'react';
 import { useOS } from '../context/OSContext';
 import DoudizhuApp from './games/DoudizhuApp';
 import BbqApp from './games/BbqApp';
+import GardenApp from './GardenApp';
 import { ROUND_MIN } from '../utils/games/bbq/engine';
 
 /**
  * 游戏大厅（MyGame）—— 小游戏合集入口。
- * 内置「斗地主」「夜市烧烤」，后续游戏注册表式扩展。
+ * 内置「小花园」「斗地主」「夜市烧烤」，后续游戏注册表式扩展。
  */
 export default function GameHubApp() {
     const { closeApp } = useOS();
-    const [active, setActive] = React.useState<'hub' | 'doudizhu' | 'bbq'>('hub');
+    const [active, setActive] = React.useState<'hub' | 'garden' | 'doudizhu' | 'bbq'>('hub');
 
     return (
         <div className="h-full w-full flex flex-col bg-slate-50 relative overflow-hidden">
@@ -26,6 +27,23 @@ export default function GameHubApp() {
 
                     {/* 游戏列表 */}
                     <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
+                        <button onClick={() => setActive('garden')}
+                            className="w-full p-4 rounded-2xl bg-gradient-to-br from-rose-50 to-amber-50 border border-rose-200 text-left cursor-pointer hover:border-rose-400 transition-colors active:scale-[0.99]">
+                            <div className="flex items-center gap-3">
+                                <span className="w-11 h-11 rounded-xl bg-rose-400 flex items-center justify-center text-2xl shadow-sm">🌸</span>
+                                <div className="flex-1">
+                                    <p className="text-[15px] font-black text-slate-800">小花园</p>
+                                    <p className="text-[11px] text-slate-500 mt-0.5">手绘菜地 · 浇水攒运气 · 收成才知道种出什么</p>
+                                </div>
+                                <span className="text-slate-400">›</span>
+                            </div>
+                            <div className="flex gap-2 mt-2">
+                                <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/70 text-slate-500">6 块田</span>
+                                <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/70 text-slate-500">8 个花盆</span>
+                                <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/70 text-slate-500">123 种作物</span>
+                            </div>
+                        </button>
+
                         <button onClick={() => setActive('doudizhu')}
                             className="w-full p-4 rounded-2xl bg-gradient-to-br from-emerald-50 to-teal-50 border border-emerald-200 text-left cursor-pointer hover:border-emerald-400 transition-colors active:scale-[0.99]">
                             <div className="flex items-center gap-3">
@@ -71,6 +89,8 @@ export default function GameHubApp() {
                         </div>
                     </div>
                 </>
+            ) : active === 'garden' ? (
+                <GardenApp onBack={() => setActive('hub')} />
             ) : active === 'doudizhu' ? (
                 <DoudizhuApp onBack={() => setActive('hub')} />
             ) : (
