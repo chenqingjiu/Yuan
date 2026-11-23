@@ -173,9 +173,21 @@ export function createWebUpdateSession(deps: Dependencies) {
     if (manual) { userAsked = true; update({ working: true, message: '正在检查更新…', dismissed: false }); }
     try {
       await registration.update();
-      if (registration.installing) { watch(registration.installing); return; }
+      if (registration.installing) {
+        watch(registration.installing);
+        if (manual) update({ working: false, message: '正在下载新版本，完成后会提示你刷新' });
+        return;
+      }
       await inspect();
-      if (manual) update({ working: false, message: state.available ? UPDATE_READY_MESSAGE : '当前已是最新版本' });
+      if (manual) {
+        // 已经有下载好的新版本在等接管时，不能回一句「已是最新」——用户会以为没生效。
+        // 主动点检查就是要更新，这里直接把「立即更新」亮出来。
+        if (registration.waiting) {
+          update({ working: false, available: true, dismissed: false, message: UPDATE_READY_MESSAGE });
+        } else {
+          update({ working: false, message: state.available ? UPDATE_READY_MESSAGE : '当前已是最新版本' });
+        }
+      }
     } catch {
       if (manual) update({ working: false, message: '暂时无法检查更新，联网后再试；已缓存的内容仍可使用' });
     } finally { checking = false; }
