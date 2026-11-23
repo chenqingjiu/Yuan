@@ -105,8 +105,19 @@ export default function GardenApp({ onBack }: { onBack: () => void }) {
                         signal: abortRef.current.signal,
                         onStage: stage => post(frameRef.current, { type: 'stage', stage }),
                     });
-                    await saveGardenMessage(char.id, 'assistant', reply.text);
-                    post(frameRef.current, { type: 'reply', text: reply.text });
+                    const action = reply.actions[0];
+                    const fallback = action
+                        ? `（去 ${action.plot} 号地${
+                              action.action === 'plant'
+                                  ? '种下了' + (action.seed === 'fantasy' ? '奇幻种子' : '普通种子')
+                                  : action.action === 'water'
+                                    ? '浇了水'
+                                    : '收了菜'
+                          }）`
+                        : '';
+                    await saveGardenMessage(char.id, 'assistant', reply.text || fallback);
+                    if (reply.text) post(frameRef.current, { type: 'reply', text: reply.text });
+                    if (action) post(frameRef.current, { type: 'act', actions: reply.actions });
                 } catch (error) {
                     const aborted = abortRef.current?.signal.aborted;
                     post(frameRef.current, {
@@ -121,6 +132,11 @@ export default function GardenApp({ onBack }: { onBack: () => void }) {
                     busy.current = false;
                     post(frameRef.current, { type: 'idle' });
                 }
+                return;
+            }
+
+            if (data.type === 'switch') {
+                setChoosing(true);
                 return;
             }
 
@@ -196,7 +212,7 @@ export default function GardenApp({ onBack }: { onBack: () => void }) {
 
             <div
                 className="absolute left-3 z-20 flex items-center gap-1.5"
-                style={{ top: 'calc(var(--safe-top, 0px) + 10px)' }}
+                style={{ top: 'calc(var(--safe-top, 0px) + 58px)' }}
             >
                 <button
                     onClick={onBack}
@@ -215,15 +231,6 @@ export default function GardenApp({ onBack }: { onBack: () => void }) {
                     </svg>
                     离开
                 </button>
-                {characters.length > 1 && (
-                    <button
-                        onClick={() => setChoosing(true)}
-                        className="flex items-center gap-1 rounded-full bg-white/80 backdrop-blur px-2.5 py-1.5 text-[12px] font-bold text-amber-900 shadow-sm border border-amber-200/70 active:scale-95 transition-transform"
-                        title="换一个人一起种"
-                    >
-                        {char.name}
-                    </button>
-                )}
             </div>
         </div>
     );

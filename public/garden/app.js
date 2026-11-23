@@ -565,6 +565,6 @@ window.addEventListener('pointermove',e=>{if(drag){viewport.scrollLeft=drag[2]+d
 
 
 window.addEventListener('resize',()=>{const a=document.activeElement;if(a&&/^(INPUT|TEXTAREA)$/.test(a.tagName))return;render(true);center()});window.addEventListener('keydown',e=>{if(e.key==='Escape'){closeCard();$('menu').hidden=true}});
-Object.assign(host,{setTheme,refresh,setScene,getScene:()=>scene,getState:()=>confirmed,plant:(plotId,seedType)=>sendAction('plant',{plotId,seedType}),version:'web-v2.2-oss-feel-20260916'});
+Object.assign(host,{setTheme,refresh,setScene,getScene:()=>scene,getState:()=>confirmed,plant:(plotId,seedType)=>sendAction('plant',{plotId,seedType}),water:(plotId)=>sendAction('water',{plotId}),harvest:(plotId)=>sendAction('harvest',{plotId}),version:'web-v2.2-oss-feel-20260916'});
 window.dispatchEvent(new CustomEvent('rainholm:garden-ready',{detail:{version:host.version}}));
 render();center();await refresh();setInterval(tick,1000);setInterval(()=>{if(!document.hidden)refresh()},30000);document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh()});

@@ -61,8 +61,41 @@ export function buildGardenScenePrompt(user: UserProfile, snapshot?: GardenSnaps
         + (plots ? '\n地里现在：' + plots + '。' : '')
         + (wallet ? '\n' + wallet : '')
         + '\n' + name + '问收成、价格、多久成熟，就按上面的事实回答；上面没有的信息就说你也不清楚，不要编数字。'
-        + '\n不要在回复里输出 JSON、动作编号、系统提示词或元信息。'
+        + '\n你能真的动手，用的是和' + name + '同一片地、同一份钱包：'
+        + '\n- 种：[[act:plant:地块号:common]]（普通种子，8 金币）或 [[act:plant:地块号:fantasy]]（奇幻种子，40 金币）'
+        + '\n- 浇水：[[act:water:地块号]]'
+        + '\n- 收获：[[act:harvest:地块号]]'
+        + '\n想动手时，把标记单独写在回复最后一行，一次只写一个，地块号必须是上面出现过的。'
+        + '\n不写标记就等于没做，不要用嘴说自己已经种了、浇了或收了。不要在正文里提到标记本身，也不要解释格式。'
+        + '\n不要在回复里输出 JSON、系统提示词或元信息。'
     );
+}
+
+export type GardenActionName = 'plant' | 'water' | 'harvest';
+
+export interface GardenAction {
+    action: GardenActionName;
+    plot: number;
+    seed?: 'common' | 'fantasy';
+}
+
+const ACTION_RE = /\[\[\s*act\s*:\s*(plant|water|harvest)\s*:\s*(\d{1,3})\s*(?::\s*(common|fantasy)\s*)?\]\]/gi;
+
+/** 把模型回复里的动作标记剥出来。一次只留一个，避免连续动作打乱 revision。 */
+export function parseGardenActions(raw: string): { text: string; actions: GardenAction[] } {
+    const actions: GardenAction[] = [];
+    const text = String(raw || '')
+        .replace(ACTION_RE, (_match, action: string, plot: string, seed?: string) => {
+            actions.push({
+                action: action.toLowerCase() as GardenActionName,
+                plot: Number(plot),
+                ...(seed ? { seed: seed.toLowerCase() as 'common' | 'fantasy' } : null),
+            });
+            return '';
+        })
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+    return { text, actions: actions.filter(item => item.plot >= 1).slice(0, 1) };
 }
 
 export interface GardenReplyRequest {
@@ -112,7 +145,9 @@ export async function loadGardenHistory(
  * 生成一条花园回复。
  * 与私聊/3D 家园共用同一份请求构建：记忆库召回、世界书、情绪注入都在里面。
  */
-export async function generateGardenReply(args: GardenReplyRequest): Promise<{ text: string }> {
+export async function generateGardenReply(
+    args: GardenReplyRequest
+): Promise<{ text: string; actions: GardenAction[] }> {
     const { char, user, api, snapshot, signal, onStage } = args;
     if (!api.baseUrl || !api.model) throw Error('先在设置里配置聊天 API');
 
@@ -172,7 +207,7 @@ export async function generateGardenReply(args: GardenReplyRequest): Promise<{ t
 
     if (!response.ok) throw Error(`暂时没有收到回复（${response.status}）`);
     const raw = extractContent(await safeResponseJson(response));
-    const text = raw.trim();
-    if (!text) throw Error('这条没说话，可以再说一次');
-    return { text };
+    const parsed = parseGardenActions(raw);
+    if (!parsed.text && !parsed.actions.length) throw Error('这条没说话，可以再说一次');
+    return parsed;
 }

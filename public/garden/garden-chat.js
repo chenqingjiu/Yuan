@@ -1,12 +1,14 @@
 /*
  * 小花园的对话面板（本地版）。
  *
- * iframe 里只做两件事：把玩家的话发给宿主、把宿主的回复显示出来。
+ * iframe 里只做三件事：把玩家的话发给宿主、把宿主的回复显示出来、替 AI 执行花园动作。
  * 上下文、记忆库、私聊互通全在宿主那侧（apps/GardenApp.tsx + utils/gardenConversation.ts）。
  *
+ * 入口是花园原本那颗「说话」按钮（#rhSayBtn），不再额外加按钮。
+ *
  * 协议：
- *   花园 → 宿主  {source:'rainholm-garden', type:'ready'|'chat'|'reload-history', text?, snapshot?}
- *   宿主 → 花园  {source:'rainholm-host', type:'history'|'reply'|'error'|'thinking'|'idle'|'stage', ...}
+ *   花园 → 宿主  {source:'rainholm-garden', type:'ready'|'chat', text?, snapshot?}
+ *   宿主 → 花园  {source:'rainholm-host', type:'history'|'reply'|'act'|'error'|'thinking'|'idle'|'stage', ...}
  */
 (function () {
     if (window.__rhGardenChatLoaded) return;
@@ -46,13 +48,6 @@
     style.textContent = [
         ':host{all:initial}',
         '*{box-sizing:border-box}',
-        '#toggle{position:fixed;left:14px;bottom:calc(16px + env(safe-area-inset-bottom,0px));width:50px;height:50px;border-radius:50%;',
-        'border:2px solid #c9a36b;background:linear-gradient(#fffaf0,#f6e7cd);color:#7d5530;font-size:22px;line-height:1;',
-        'box-shadow:0 6px 16px rgba(120,80,40,.28);display:flex;align-items:center;justify-content:center;pointer-events:auto;',
-        'cursor:pointer;padding:0;transition:transform .16s ease}',
-        '#toggle:active{transform:scale(.94)}',
-        '#toggle .dot{position:absolute;top:2px;right:2px;width:10px;height:10px;border-radius:50%;background:#e2725b;border:2px solid #fffaf0;display:none}',
-        '#toggle.has-new .dot{display:block}',
         '#panel{position:fixed;left:0;right:0;bottom:0;margin:0 auto;width:100%;max-width:520px;height:min(62vh,560px);',
         'display:flex;flex-direction:column;background:linear-gradient(#fffdf7,#fbf3e3);border-radius:20px 20px 0 0;',
         'border:2px solid #d9c19a;border-bottom:0;box-shadow:0 -10px 30px rgba(110,75,35,.22);',
@@ -62,7 +57,8 @@
         '#head{display:flex;align-items:center;gap:8px;padding:11px 14px 9px;border-bottom:1px dashed #e2d3b8;flex:none}',
         '#head h3{margin:0;font-size:14px;color:#6b4a2a;font-weight:800;flex:1}',
         '#head small{font-size:11px;color:#a88b66;font-weight:500}',
-        '#close{border:0;background:#f1e4cd;color:#8a6540;width:28px;height:28px;border-radius:50%;font-size:15px;cursor:pointer;padding:0}',
+        '#close,#switch{border:0;background:#f1e4cd;color:#8a6540;width:28px;height:28px;border-radius:50%;font-size:15px;cursor:pointer;padding:0}',
+        '#switch[hidden]{display:none}',
         '#list{flex:1;overflow-y:auto;padding:12px 14px 6px;display:flex;flex-direction:column;gap:9px;-webkit-overflow-scrolling:touch}',
         '.row{display:flex;flex-direction:column;max-width:86%}',
         '.row.me{align-self:flex-end;align-items:flex-end}',
@@ -73,27 +69,22 @@
         '.ta .bubble{background:#fff;color:#4e4237;border-bottom-left-radius:5px;border:1px solid #e6ddcd;box-shadow:0 1px 3px rgba(120,90,50,.07)}',
         '.typing{letter-spacing:3px;color:#b39a76}',
         '.sys{align-self:center;font-size:11.5px;color:#a08a6c;background:#f4ead8;border-radius:10px;padding:5px 10px;max-width:90%;text-align:center}',
+        '.empty{align-self:center;margin-top:34px;font-size:12px;color:#b09a7c}',
         '#foot{flex:none;display:flex;gap:8px;padding:9px 12px calc(10px + env(safe-area-inset-bottom,0px));border-top:1px dashed #e2d3b8;background:#fffdf7}',
         '#input{flex:1;min-height:38px;max-height:92px;resize:none;border:1.5px solid #dcc9a8;border-radius:12px;background:#fff;',
         'padding:9px 11px;font-size:13.5px;color:#4e4237;font-family:inherit;line-height:1.4;outline:none}',
         '#input:focus{border-color:#c9a36b}',
         '#send{border:0;border-radius:12px;background:#c9a36b;color:#fff;font-size:13px;font-weight:800;padding:0 15px;cursor:pointer}',
         '#send:disabled{opacity:.45;cursor:default}',
-        '@media(prefers-reduced-motion:reduce){#panel,#toggle{transition:none}}'
+        '@media(prefers-reduced-motion:reduce){#panel{transition:none}}'
     ].join('');
     root.appendChild(style);
-
-    var toggle = document.createElement('button');
-    toggle.id = 'toggle';
-    toggle.type = 'button';
-    toggle.setAttribute('aria-label', '和 TA 说话');
-    toggle.innerHTML = '💬<span class="dot"></span>';
-    root.appendChild(toggle);
 
     var panel = document.createElement('div');
     panel.id = 'panel';
     panel.innerHTML = [
         '<div id="head"><h3 id="title">说说话</h3><small id="hint"></small>',
+        '<button id="switch" type="button" aria-label="换一个人" title="换一个人" hidden>⇄</button>',
         '<button id="close" type="button" aria-label="收起">✕</button></div>',
         '<div id="list" role="log" aria-live="polite"></div>',
         '<div id="foot"><textarea id="input" rows="1" maxlength="500" placeholder="说点什么…" aria-label="在花园说句话"></textarea>',
@@ -107,7 +98,28 @@
     var title = root.getElementById('title');
     var hint = root.getElementById('hint');
 
+    /* 原生的「说话」按钮加一颗未读点 */
+    var dotStyle = document.createElement('style');
+    dotStyle.textContent = [
+        '#rhSayBtn.rh-chat-new::after{content:"";position:absolute;top:-1px;right:-1px;width:11px;height:11px;',
+        'border-radius:50%;background:#e2725b;border:2px solid #fffdf7;pointer-events:none}'
+    ].join('');
+    document.head.appendChild(dotStyle);
+
+    function nativeBtn() {
+        return document.getElementById('rhSayBtn');
+    }
+
+    function markUnread(on) {
+        var btn = nativeBtn();
+        if (btn) btn.classList.toggle('rh-chat-new', !!on);
+    }
+
     function render() {
+        if (!messages.length) {
+            list.innerHTML = '<div class="empty">' + (charName ? esc(charName) + ' 在花园里，说点什么吧' : '说点什么吧') + '</div>';
+            return;
+        }
         var html = messages.map(function (m) {
             if (m.role === 'system') return '<div class="sys">' + esc(m.text) + '</div>';
             var own = m.role === 'user';
@@ -128,14 +140,14 @@
         if (bubble === 'white' || bubble === 'black') {
             window.__rhCatSpeak && window.__rhCatSpeak(bubble, text, bubble === 'black' ? 9000 : 4000);
         }
-        if (bubble === 'black' && !panelOpen) toggle.classList.add('has-new');
+        if (bubble === 'black' && !panelOpen) markUnread(true);
     }
 
     function setOpen(next) {
         panelOpen = next;
         panel.classList.toggle('open', next);
         if (next) {
-            toggle.classList.remove('has-new');
+            markUnread(false);
             render();
             setTimeout(function () { input.focus(); }, 240);
         }
@@ -147,9 +159,6 @@
         render();
     }
 
-    toggle.addEventListener('click', function () { setOpen(!panelOpen); });
-    root.getElementById('close').addEventListener('click', function () { setOpen(false); });
-
     function submit() {
         var text = input.value.trim();
         if (!text || busy) return;
@@ -160,28 +169,75 @@
     }
 
     sendBtn.addEventListener('click', submit);
+    root.getElementById('close').addEventListener('click', function () { setOpen(false); });
+    var switchBtn = root.getElementById('switch');
+    switchBtn.addEventListener('click', function () {
+        setOpen(false);
+        send({ type: 'switch' });
+    });
     input.addEventListener('keydown', function (e) {
         if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
             e.preventDefault();
             submit();
         }
+        if (e.key === 'Escape') setOpen(false);
     });
     input.addEventListener('input', function () {
         input.style.height = 'auto';
         input.style.height = Math.min(92, input.scrollHeight) + 'px';
     });
 
-    /* ── 花园状态快照：能读多少读多少，读不到就不传 ───────────────────── */
+    /* 接管原生「说话」按钮：捕获阶段拦下来，改为开对话面板 */
+    document.addEventListener('click', function (e) {
+        var target = e.target;
+        if (!target || typeof target.closest !== 'function') return;
+        if (!target.closest('#rhSayBtn')) return;
+        e.preventDefault();
+        e.stopPropagation();
+        setOpen(!panelOpen);
+    }, true);
+
+    /* ── 花园状态快照 ─────────────────────────────────────────────────── */
     function readSnapshot() {
         try {
-            var coins = parseInt((document.getElementById('coins') || {}).textContent, 10);
-            var scene = document.body.dataset.scene || (location.hash.indexOf('greenhouse') >= 0 ? 'greenhouse' : 'garden');
+            var g = window.RainholmGarden;
+            var st = g && typeof g.getState === 'function' ? g.getState() : null;
+            var coins = st && typeof st.coins === 'number'
+                ? st.coins
+                : parseInt((document.getElementById('coins') || {}).textContent, 10);
+            var plots = st && Array.isArray(st.plots) ? st.plots.map(function (p) {
+                return { id: p.id, state: p.state, crop: p.seedType || undefined };
+            }) : undefined;
+            var scene = (g && typeof g.getScene === 'function' ? g.getScene() : null)
+                || document.body.dataset.scene
+                || (location.hash.indexOf('greenhouse') >= 0 ? 'greenhouse' : 'garden');
             return {
                 scene: scene,
-                coins: Number.isFinite(coins) ? coins : undefined
+                coins: Number.isFinite(coins) ? coins : undefined,
+                plots: plots
             };
         } catch (_) {
             return undefined;
+        }
+    }
+
+    /* ── 替 AI 动手 ───────────────────────────────────────────────────── */
+    function runAction(act) {
+        var g = window.RainholmGarden;
+        if (!act || !g) return;
+        var plot = Number(act.plot);
+        if (!Number.isFinite(plot) || plot < 1) return;
+        try {
+            if (act.action === 'plant') g.plant(plot, act.seed === 'fantasy' ? 'fantasy' : 'common');
+            else if (act.action === 'water') g.water(plot);
+            else if (act.action === 'harvest') g.harvest(plot);
+        } catch (error) {
+            messages.push({
+                role: 'system',
+                text: '这个动作没做成：' + (error && error.message ? error.message : '花园没响应'),
+                at: Date.now()
+            });
+            render();
         }
     }
 
@@ -195,11 +251,11 @@
         if (data.type === 'history') {
             charName = (data.character && data.character.name) || '';
             title.textContent = charName ? '和 ' + charName + ' 说说话' : '说说话';
+            switchBtn.hidden = !charName;
             hint.textContent = data.configured === false ? '还没配聊天 API' : '';
             messages = (data.messages || []).map(function (m) {
                 return { role: m.role === 'character' ? 'character' : 'user', text: m.text, at: m.at };
             });
-            setOpen(true);
             render();
             return;
         }
@@ -209,6 +265,10 @@
         if (data.type === 'reply') {
             hint.textContent = '';
             pushMessage('character', data.text, 'black');
+            return;
+        }
+        if (data.type === 'act') {
+            (data.actions || []).forEach(runAction);
             return;
         }
         if (data.type === 'error') {
@@ -227,14 +287,14 @@
         setTimeout(sayReady, 800);
     }
 
-    /* 白猫那句「说点什么」也接进对话 */
+    /* 原生白猫输入条（如果还能触发）也接进对话 */
     window.__rhSayToChat = function (text) {
         var value = String(text || '').trim();
         if (!value) return;
-        /* 白猫自己会冒泡（host-cat.js 负责），这里只入面板、发给宿主 */
         pushMessage('user', value);
         send({ type: 'chat', text: value, snapshot: readSnapshot() });
     };
+    window.__rhGardenChatOpen = function () { setOpen(true); };
 
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', sayReady, { once: true });
