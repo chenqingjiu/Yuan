@@ -66,11 +66,11 @@ const HOUSE_FRAME: Record<number, { top: number; bottom: number; width: number }
 };
 
 /** 房子每个阶段的配色 */
-const HOUSE_TONE: Record<number, { wall: string; roof: string; hasRoof: boolean }> = {
-    1: { wall: '#8b7a68', roof: '#6d6154', hasRoof: false },
-    2: { wall: '#c6a680', roof: '#8d949c', hasRoof: true },
-    3: { wall: '#e2d5bd', roof: '#7d9464', hasRoof: true },
-    4: { wall: '#efe0c4', roof: '#2f6f6a', hasRoof: true },
+const HOUSE_TONE: Record<number, { wall: string; side: string; roof: string; hasRoof: boolean }> = {
+    1: { wall: '#8b7a68', side: '#7a6b5c', roof: '#6d6154', hasRoof: false },
+    2: { wall: '#eee7da', side: '#ded4c5', roof: '#8d949c', hasRoof: true },
+    3: { wall: '#f2ece2', side: '#e5ddcd', roof: '#7d9464', hasRoof: true },
+    4: { wall: '#f5efe6', side: '#e7dfd1', roof: '#2f6f6a', hasRoof: false },
 };
 
 const BASE = import.meta.env.BASE_URL;
@@ -81,7 +81,7 @@ const BASE = import.meta.env.BASE_URL;
  * 只做一次 CSS 合成，不动贴图：以后换素材不用重新出图，也不会把「贴图 = 最终色」这条规则打破。
  * 数值是照着美术给的目标画面反推的 —— 草更翠、屋顶更橙、天空更蓝、中间调更通透。
  */
-const SCENE_FILTER = 'saturate(1.2) brightness(1.08)';
+const SCENE_FILTER = 'saturate(0.82) contrast(0.99) brightness(0.96)';
 
 export class FarmScene {
     private renderer: THREE.WebGLRenderer;
@@ -180,7 +180,7 @@ export class FarmScene {
 
         this.camera = new THREE.PerspectiveCamera(44, 1, 0.1, 120);
         this.scene.background = new THREE.Color('#7fc8ea');
-        this.scene.fog = new THREE.Fog('#e8f0dc', 32, 90);
+        this.scene.fog = new THREE.Fog('#e4eef4', 32, 90);
 
         this.buildLights();
         this.buildGround();
@@ -204,8 +204,8 @@ export class FarmScene {
     // ---------------------------------------------------------------- 场景搭建
 
     private buildLights() {
-        this.scene.add(new THREE.HemisphereLight('#fff6e0', '#7a8c4a', 1.15));
-        const sun = new THREE.DirectionalLight('#fff3d8', 1.45);
+        this.scene.add(new THREE.HemisphereLight('#eef4ff', '#8d9a72', 1.0));
+        const sun = new THREE.DirectionalLight('#fff9f2', 1.3);
         sun.position.set(-6, 9.5, 5.5);
         this.scene.add(sun);
     }
@@ -406,16 +406,16 @@ export class FarmScene {
         // 墙体盒子：只要墙那一段，屋顶交给棱柱
         const wallH = contentH * 0.46;
         const wall = new THREE.Mesh(
-            new THREE.BoxGeometry(contentW * 0.8, wallH, 0.92),
+            new THREE.BoxGeometry(contentW * 0.5, wallH, 0.4),
             new THREE.MeshLambertMaterial({
-                color: tone.wall,
+                color: tone.side,
                 // 正面立面图现在是不吃光的 Basic（满亮度），墙体要是还按 0.47 的辐照度算，
                 // 侧面露出来会比正面暗一大截。补自发光把底色拉回接近原色，只留一点明暗转折。
-                emissive: new THREE.Color(tone.wall),
-                emissiveIntensity: 0.62,
+                emissive: new THREE.Color(tone.side),
+                emissiveIntensity: 0.5,
             }),
         );
-        wall.position.set(0, baseY + wallH / 2, -0.46);
+        wall.position.set(0, baseY + wallH / 2, -0.2);
         wall.castShadow = true;
         wall.receiveShadow = true;
         this.houseGroup.add(wall);
@@ -500,11 +500,12 @@ export class FarmScene {
         addCard('prop-haystack.png', -6.3, -1.6, 1.5);
         addCard('prop-well.png', -2.25, -2.55, 1.7);
         addCard('prop-bush.png', -7.6, -2.2, 1.2);
-        addCard('prop-bush.png', 2.9, -3.6, 1.05);
+        // 树根下那丛灌木，贴着树干站
+        addCard('prop-bush.png', 3.35, -4.15, 1.05);
         addCard('prop-rock.png', 3.2, 2.1, 0.6);
         addCard('prop-rock.png', -3.6, 3.1, 0.5);
         addCard('prop-sakura.png', -8.8, -3.2, 3.1);
-        addCard('flower-1.png', -1.9, 1.55, 0.95);
+        // 白雏菊（flower-1）已经改成商城装饰 daisy，不再固定长在田边
         addCard('flower-3.png', 5.1, -0.7, 0.95);
         addCard('flower-2.png', -4.35, 3.35, 1.0);
 

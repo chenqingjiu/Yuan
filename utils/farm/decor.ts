@@ -8,7 +8,7 @@
  * 坐标是场景世界坐标（米），z 越小越靠里。
  */
 
-export type DecorId = 'fence' | 'rock' | 'flower' | 'bush' | 'haystack' | 'well' | 'tree' | 'sakura';
+export type DecorId = 'fence' | 'rock' | 'daisy' | 'flower' | 'bush' | 'haystack' | 'well' | 'tree' | 'sakura';
 
 export interface DecorSlot {
     x: number;
@@ -63,6 +63,22 @@ export const DECOR: Record<DecorId, DecorDef> = {
             { x: -5.4, z: 0.4, h: 0.5 },
         ],
         desc: '随手丢在草里的一块石头，不小不大',
+    },
+    daisy: {
+        id: 'daisy',
+        name: '野花',
+        tex: 'flower-1.png',
+        cost: 30,
+        level: 1,
+        max: 3,
+        size: 0.95,
+        // 只在房子近旁落位：左前、右前、后墙根
+        slots: [
+            { x: -5.95, z: -2.2 },
+            { x: -2.85, z: -2.3 },
+            { x: -2.5, z: -1.6 },
+        ],
+        desc: '一小丛白雏菊，摆在屋根下最耐看',
     },
     flower: {
         id: 'flower',
@@ -145,7 +161,7 @@ export const DECOR: Record<DecorId, DecorDef> = {
     },
 };
 
-export const DECOR_ORDER: DecorId[] = ['fence', 'rock', 'flower', 'bush', 'haystack', 'well', 'tree', 'sakura'];
+export const DECOR_ORDER: DecorId[] = ['daisy', 'fence', 'rock', 'flower', 'bush', 'haystack', 'well', 'tree', 'sakura'];
 
 /** 当前摆了几个 */
 export function decorCount(state: { decor?: Partial<Record<DecorId, number>> }, id: DecorId): number {

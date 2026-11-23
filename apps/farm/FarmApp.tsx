@@ -343,6 +343,11 @@ export default function FarmApp({ character, onBack }: { character?: CharacterPr
     return (
         <div ref={rootRef} className="h-full w-full flex flex-col bg-[#bfe3f2] relative overflow-hidden select-none">
             <div ref={hostRef} className="absolute inset-0" />
+            {/* 冷色薄纱：只给 3D 画面降温，HUD 在它上面不受影响 */}
+            <div
+                className="absolute inset-0 pointer-events-none"
+                style={{ background: '#a8cde6', mixBlendMode: 'soft-light', opacity: 0.5 }}
+            />
 
             {/* 顶栏 */}
             <div
