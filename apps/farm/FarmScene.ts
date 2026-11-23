@@ -8,6 +8,7 @@
 
 import * as THREE from 'three';
 import { CROPS, type CropId } from '../../utils/farm/crops';
+import { DECOR, DECOR_ORDER, type DecorId } from '../../utils/farm/decor';
 import { createVisitor } from '../room3d/chibi/visitor';
 import type { HairSettings, Parts } from '../room3d/chibi/types';
 
@@ -143,6 +144,8 @@ export class FarmScene {
     private blinkUntil = 0;
 
     private billboards: THREE.Object3D[] = [];
+    /** 商城买的装饰：品类 → 已摆出来的卡片（下标对应 slots 下标） */
+    private decorCards = new Map<DecorId, { card: THREE.Mesh; shadow: THREE.Mesh }[]>();
     private backdropPivot = new THREE.Group();
     private blobTex: THREE.Texture | null = null;
     private actorShadow: THREE.Mesh | null = null;
@@ -430,27 +433,29 @@ export class FarmScene {
     }
 
     /** 装饰：树、栅栏、灌木、石头、水井、干草堆。都是正面小卡片，缩小后看不出是纸片。 */
+    /** 一张正面小卡片 + 一地软影。返回两个 mesh，装饰增删时整组摘掉。 */
+    private addPropCard(name: string, x: number, z: number, h: number) {
+        const tex = this.loadTex(`${BASE}farm/${name}`, name);
+        const mat = new THREE.MeshLambertMaterial({
+            map: tex,
+            transparent: true,
+            alphaTest: 0.42,
+            side: THREE.DoubleSide,
+        });
+        const card = new THREE.Mesh(new THREE.PlaneGeometry(h, h), mat);
+        card.position.set(x, h / 2, z);
+        card.castShadow = false;
+        this.scene.add(card);
+        this.billboards.push(card);
+        const shadow = this.blob(h * 0.62, h * 0.42, x, 0.012, z + h * 0.06, 0.85);
+        return { card, shadow };
+    }
+
     private buildProps() {
-        const addCard = (name: string, x: number, z: number, h: number, ry = 0) => {
-            const tex = this.loadTex(`${BASE}farm/${name}`, name);
-            const mat = new THREE.MeshLambertMaterial({
-                map: tex,
-                transparent: true,
-                alphaTest: 0.42,
-                side: THREE.DoubleSide,
-            });
-            const m = new THREE.Mesh(new THREE.PlaneGeometry(h, h), mat);
-            m.position.set(x, h / 2, z);
-            m.rotation.y = ry;
-            m.castShadow = false;
-            this.scene.add(m);
-            this.billboards.push(m);
-            this.blob(h * 0.62, h * 0.42, x, 0.012, z + h * 0.06, 0.85);
-            return m;
-        };
+        const addCard = (name: string, x: number, z: number, h: number) => this.addPropCard(name, x, z, h);
 
         addCard('prop-tree.png', -7.0, -4.6, 3.4);
-        addCard('prop-tree.png', 3.6, -4.9, 2.8, Math.PI * 0.12);
+        addCard('prop-tree.png', 3.6, -4.9, 2.8);
         addCard('prop-haystack.png', -6.3, -1.6, 1.5);
         addCard('prop-well.png', -2.25, -2.55, 1.7);
         addCard('prop-bush.png', -7.6, -2.2, 1.2);
@@ -476,6 +481,41 @@ export class FarmScene {
             this.scene.add(seg);
             this.billboards.push(seg);
             this.blob(1.2, 0.34, seg.position.x, 0.012, seg.position.z - 0.04, 0.7);
+        }
+    }
+
+    /**
+     * 院子装饰。只按「数量」对账，不传坐标：位置全部来自 DECOR[id].slots。
+     * 数量变多就补、变少就拆，重复调用无副作用。
+     */
+    setDecor(counts: Partial<Record<DecorId, number>>) {
+        for (const id of DECOR_ORDER) {
+            const def = DECOR[id];
+            const want = Math.max(0, Math.min(counts[id] ?? 0, def.slots.length));
+            let list = this.decorCards.get(id);
+            if (!list) {
+                list = [];
+                this.decorCards.set(id, list);
+            }
+
+            while (list.length > want) {
+                const o = list.pop()!;
+                o.card.removeFromParent();
+                o.shadow.removeFromParent();
+                const at = this.billboards.indexOf(o.card);
+                if (at >= 0) this.billboards.splice(at, 1);
+                const mat = o.card.material;
+                if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
+                else mat.dispose();
+                o.card.geometry.dispose();
+                (o.shadow.material as THREE.Material).dispose();
+                o.shadow.geometry.dispose();
+            }
+
+            while (list.length < want) {
+                const slot = def.slots[list.length];
+                list.push(this.addPropCard(def.tex, slot.x, slot.z, slot.h ?? def.size));
+            }
         }
     }
 

@@ -7,7 +7,9 @@ import { selectedHairAssets, type HairSettings, type Parts } from '../room3d/chi
 import { loadCreatorPartsForRender } from '../../utils/creatorPartsBlob';
 import { FarmScene } from './FarmScene';
 import {
+    buyDecor,
     buyHouse,
+    canBuyDecor,
     canBuyHouse,
     createFarm,
     harvest,
@@ -22,9 +24,11 @@ import {
     setHouseStage,
     stageOf,
     water,
+    type ActionResult,
     type FarmState,
 } from '../../utils/farm/engine';
 import { CROPS, HOUSE_STAGES, MAX_LEVEL, PLOT_COUNT, type CropId, type HouseStage } from '../../utils/farm/crops';
+import { DECOR, DECOR_ORDER, decorCount, type DecorId } from '../../utils/farm/decor';
 
 const CROP_ORDER: CropId[] = ['wheat', 'corn', 'carrot'];
 
@@ -76,7 +80,8 @@ export default function FarmApp({ character, onBack }: { character?: CharacterPr
             if (raw) {
                 const parsed = JSON.parse(raw) as FarmState;
                 if (Array.isArray(parsed.plots) && parsed.plots.length === PLOT_COUNT && Array.isArray(parsed.ownedHouses)) {
-                    return parsed;
+                    // 老存档没有 decor 字段，补一个空对象就行，不用迁移
+                    return { ...parsed, decor: parsed.decor ?? {} };
                 }
             }
         } catch {
@@ -93,6 +98,8 @@ export default function FarmApp({ character, onBack }: { character?: CharacterPr
     const [extraItems, setExtraItems] = useState<unknown[]>();
     const [creatorReady, setCreatorReady] = useState(false);
     const [shopOpen, setShopOpen] = useState(false);
+    /** 商城两个页签：房子（换外观） / 装饰（买回来摆） */
+    const [shopTab, setShopTab] = useState<'house' | 'decor'>('house');
 
     useEffect(() => {
         const el = rootRef.current;
@@ -183,6 +190,7 @@ export default function FarmApp({ character, onBack }: { character?: CharacterPr
             scene.setPlot(i, { crop: plot.crop, stage: stageOf(plot, now) });
         });
         scene.setHouseLevel(farm.houseStage);
+        scene.setDecor(farm.decor ?? {});
     }, [farm, now]);
 
     // 角色形象
@@ -210,11 +218,13 @@ export default function FarmApp({ character, onBack }: { character?: CharacterPr
     // ---------- 交互 ----------
 
     const apply = useCallback(
-        (result: { ok: boolean; reason?: string }, okText?: string) => {
+        (result: ActionResult, okText?: string) => {
             if (!result.ok) {
                 if (result.reason) addToast(result.reason);
                 return false;
             }
+            // 关键：引擎是纯函数，新状态必须在这里落库，否则会出现「提示买到了、金币没扣、房子没变」
+            setFarm(result.state);
             if (okText) addToast(okText);
             return true;
         },
@@ -474,65 +484,135 @@ export default function FarmApp({ character, onBack }: { character?: CharacterPr
                 )}
             </div>
 
-            {/* 房子商店 */}
+            {/* 院子商城：房子（换外观） + 装饰（买回来摆） */}
             {shopOpen && (
                 <div className="absolute inset-0 z-30 bg-black/45 backdrop-blur-sm flex items-end sm:items-center justify-center px-3 pb-3" onClick={() => setShopOpen(false)}>
                     <div className="w-full max-w-[520px] rounded-2xl bg-white shadow-2xl p-3" onClick={e => e.stopPropagation()}>
                         <div className="flex items-center justify-between mb-2">
                             <div>
-                                <p className="text-[13px] font-black text-slate-800">修房子</p>
-                                <p className="text-[10px] text-slate-500 mt-0.5">够等级才能买，买过的随时能换回去</p>
+                                <p className="text-[13px] font-black text-slate-800">院子</p>
+                                <p className="text-[10px] text-slate-500 mt-0.5">房子买了随时能换回来，装饰摆下就一直在</p>
                             </div>
                             <button onClick={() => setShopOpen(false)} className="text-slate-400 text-xl leading-none px-1 cursor-pointer">×</button>
                         </div>
 
-                        <div className="space-y-1.5">
-                            {HOUSE_STAGES.map(h => {
-                                const owned = farm.ownedHouses.includes(h.stage);
-                                const stage = h.stage as HouseStage;
-                                const check = canBuyHouse(farm, stage);
-                                const active = farm.houseStage === h.stage;
-                                return (
-                                    <button
-                                        key={h.stage}
-                                        onClick={() => {
-                                            if (active) return;
-                                            if (owned) {
-                                                apply(setHouseStage(farm, stage, Date.now()), `换回「${h.name}」`);
-                                                return;
-                                            }
-                                            const r = buyHouse(farm, stage, Date.now());
-                                            if (apply(r, `修好了 · ${h.name}`)) setShopOpen(false);
-                                        }}
-                                        className={`w-full flex items-center gap-2.5 p-2 rounded-xl border text-left transition-colors ${
-                                            active
-                                                ? 'bg-emerald-50 border-emerald-300'
-                                                : owned
-                                                  ? 'bg-slate-50 border-slate-200 cursor-pointer'
-                                                  : check.ok
-                                                    ? 'bg-amber-50 border-amber-300 cursor-pointer'
-                                                    : 'bg-slate-50 border-slate-200 opacity-70'
-                                        }`}
-                                    >
-                                        <img src={`${import.meta.env.BASE_URL}farm/house-${h.stage}.png`} alt="" className="w-11 h-11 object-contain shrink-0" />
-                                        <div className="flex-1 min-w-0">
-                                            <p className="text-[12px] font-black text-slate-800">{h.name}</p>
-                                            <p className="text-[10px] text-slate-500 mt-0.5">
-                                                {h.stage === 1 ? '一开始就有的破屋子' : `Lv.${h.level} 解锁 · ${h.cost} 币`}
-                                            </p>
-                                        </div>
-                                        <span className={`text-[10px] font-bold shrink-0 ${
-                                            active ? 'text-emerald-600' : owned ? 'text-slate-500' : check.ok ? 'text-amber-700' : 'text-slate-400'
-                                        }`}>
-                                            {active ? '当前' : owned ? '换上' : check.ok ? '购买' : (level < h.level ? `Lv.${h.level}` : '金币不足')}
-                                        </span>
-                                    </button>
-                                );
-                            })}
+                        <div className="flex gap-1 rounded-xl bg-slate-100 p-0.5 mb-2">
+                            {(
+                                [
+                                    ['house', '房子'],
+                                    ['decor', '装饰'],
+                                ] as const
+                            ).map(([key, label]) => (
+                                <button
+                                    key={key}
+                                    onClick={() => setShopTab(key)}
+                                    className={`flex-1 py-1.5 rounded-lg text-[11px] font-black transition-colors cursor-pointer ${
+                                        shopTab === key ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500'
+                                    }`}
+                                >
+                                    {label}
+                                </button>
+                            ))}
                         </div>
 
-                        {level >= MAX_LEVEL && (
-                            <p className="mt-2 text-[10px] text-slate-400 text-center">这一版到 Lv.10，下一版会有草莓、南瓜和院子装饰</p>
+                        <div className="max-h-[58vh] overflow-y-auto pr-0.5">
+                            {shopTab === 'house' ? (
+                                <div className="space-y-1.5">
+                                    {HOUSE_STAGES.map(h => {
+                                        const owned = farm.ownedHouses.includes(h.stage);
+                                        const stage = h.stage as HouseStage;
+                                        const check = canBuyHouse(farm, stage);
+                                        const active = farm.houseStage === h.stage;
+                                        return (
+                                            <button
+                                                key={h.stage}
+                                                onClick={() => {
+                                                    if (active) return;
+                                                    if (owned) {
+                                                        apply(setHouseStage(farm, stage, Date.now()), `换回「${h.name}」`);
+                                                        return;
+                                                    }
+                                                    const r = buyHouse(farm, stage, Date.now());
+                                                    if (apply(r, `修好了 · ${h.name}`)) setShopOpen(false);
+                                                }}
+                                                className={`w-full flex items-center gap-2.5 p-2 rounded-xl border text-left transition-colors ${
+                                                    active
+                                                        ? 'bg-emerald-50 border-emerald-300'
+                                                        : owned
+                                                          ? 'bg-slate-50 border-slate-200 cursor-pointer'
+                                                          : check.ok
+                                                            ? 'bg-amber-50 border-amber-300 cursor-pointer'
+                                                            : 'bg-slate-50 border-slate-200 opacity-70'
+                                                }`}
+                                            >
+                                                <img src={`${import.meta.env.BASE_URL}farm/house-${h.stage}.png`} alt="" className="w-11 h-11 object-contain shrink-0" />
+                                                <div className="flex-1 min-w-0">
+                                                    <p className="text-[12px] font-black text-slate-800">{h.name}</p>
+                                                    <p className="text-[10px] text-slate-500 mt-0.5">
+                                                        {h.stage === 1 ? '一开始就有的破屋子' : `Lv.${h.level} 解锁 · ${h.cost} 币`}
+                                                    </p>
+                                                </div>
+                                                <span
+                                                    className={`text-[10px] font-bold shrink-0 ${
+                                                        active ? 'text-emerald-600' : owned ? 'text-slate-500' : check.ok ? 'text-amber-700' : 'text-slate-400'
+                                                    }`}
+                                                >
+                                                    {active ? '当前' : owned ? '换上' : check.ok ? '购买' : level < h.level ? `Lv.${h.level}` : '金币不足'}
+                                                </span>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            ) : (
+                                <div className="grid grid-cols-2 gap-1.5">
+                                    {DECOR_ORDER.map(id => {
+                                        const def = DECOR[id];
+                                        const have = decorCount(farm, id);
+                                        const full = have >= def.slots.length;
+                                        const check = canBuyDecor(farm, id);
+                                        return (
+                                            <button
+                                                key={id}
+                                                onClick={() => {
+                                                    if (full) {
+                                                        addToast(`${def.name}已经摆满了`);
+                                                        return;
+                                                    }
+                                                    if (!check.ok) {
+                                                        addToast(check.reason);
+                                                        return;
+                                                    }
+                                                    apply(buyDecor(farm, id, Date.now()), `${def.name} +1`);
+                                                }}
+                                                className={`flex flex-col items-stretch gap-1 p-2 rounded-xl border text-left transition-colors ${
+                                                    full || !check.ok ? 'bg-slate-50 border-slate-200 opacity-75' : 'bg-amber-50 border-amber-300 cursor-pointer'
+                                                }`}
+                                            >
+                                                <div className="flex items-center gap-1.5">
+                                                    <img src={`${import.meta.env.BASE_URL}farm/${def.tex}`} alt="" className="w-9 h-9 object-contain shrink-0" />
+                                                    <div className="flex-1 min-w-0">
+                                                        <p className="text-[11px] font-black text-slate-800 leading-tight">{def.name}</p>
+                                                        <p className="text-[9px] text-slate-400 leading-tight mt-0.5">
+                                                            {have}/{def.max} 已摆
+                                                        </p>
+                                                    </div>
+                                                </div>
+                                                <p className="text-[9px] text-slate-500 leading-tight">{def.desc}</p>
+                                                <div className="flex items-center justify-between mt-0.5">
+                                                    <span className="text-[10px] font-bold text-amber-700">{def.cost} 币</span>
+                                                    <span className={`text-[10px] font-bold ${full || !check.ok ? 'text-slate-400' : 'text-amber-700'}`}>
+                                                        {full ? '摆满' : check.ok ? '买' : level < def.level ? `Lv.${def.level}` : '金币不足'}
+                                                    </span>
+                                                </div>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                        </div>
+
+                        {level >= MAX_LEVEL && shopTab === 'house' && (
+                            <p className="mt-2 text-[10px] text-slate-400 text-center">这一版到 Lv.10，下一版会有草莓和南瓜</p>
                         )}
                     </div>
                 </div>

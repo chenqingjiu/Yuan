@@ -18,6 +18,7 @@ import {
     type CropId,
     type HouseStage,
 } from './crops';
+import { DECOR, decorCount, type DecorId } from './decor';
 
 export interface PlotState {
     crop: CropId | null;
@@ -39,6 +40,8 @@ export interface FarmState {
     houseStage: HouseStage;
     /** 已经买下的阶段，随时可以切回去看 */
     ownedHouses: HouseStage[];
+    /** 院子里额外摆的装饰：品类 → 数量 */
+    decor: Partial<Record<DecorId, number>>;
     updatedAt: number;
 }
 
@@ -54,6 +57,7 @@ export function createFarm(now: number = Date.now()): FarmState {
         tutorialUsed: false,
         houseStage: 1,
         ownedHouses: [1],
+        decor: {},
         updatedAt: now,
     };
 }
@@ -219,6 +223,39 @@ export function buyHouse(state: FarmState, stage: HouseStage, now: number): Acti
 export function setHouseStage(state: FarmState, stage: HouseStage, now: number): ActionResult {
     if (!state.ownedHouses.includes(stage)) return { ok: false, reason: '这个阶段还没买' };
     return { ok: true, state: { ...state, houseStage: stage, updatedAt: now } };
+}
+
+/** 这个装饰现在能不能买：位置没满、等级够、钱够。 */
+export function canBuyDecor(state: FarmState, id: DecorId): { ok: boolean; reason: string } {
+    const def = DECOR[id];
+    if (!def) return { ok: false, reason: '没有这个装饰' };
+    const have = decorCount(state, id);
+    if (have >= def.slots.length) return { ok: false, reason: `${def.name}已经摆满` };
+    if (levelOf(state) < def.level) return { ok: false, reason: `要 ${def.level} 级才能买` };
+    if (state.coins < def.cost) return { ok: false, reason: `还差 ${def.cost - state.coins} 币` };
+    return { ok: true, reason: '' };
+}
+
+/**
+ * 买一件院子装饰。
+ *
+ * 只加数量，具体摆在哪由场景按 `DECOR[id].slots[数量 - 1]` 决定——
+ * 逻辑层不存坐标，位置改了不用迁移存档。
+ */
+export function buyDecor(state: FarmState, id: DecorId, now: number): ActionResult {
+    const check = canBuyDecor(state, id);
+    if (!check.ok) return { ok: false, reason: check.reason };
+    const def = DECOR[id];
+    const have = decorCount(state, id);
+    return {
+        ok: true,
+        state: {
+            ...state,
+            coins: state.coins - def.cost,
+            decor: { ...(state.decor ?? {}), [id]: have + 1 },
+            updatedAt: now,
+        },
+    };
 }
 
 /** 全部地块的状态摘要，给界面画一圈小字用。 */
