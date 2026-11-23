@@ -51,9 +51,17 @@ const STAGE_HEIGHT = [0, 0.26, 0.44, 0.62, 0.82];
 
 /** 每张作物图里，真正有内容的部分占画布多高。用来把「内容高度」换算成平面尺寸。 */
 const CROP_FRAME: Record<string, number> = {
-    'wheat-1': 0.195, 'wheat-2': 0.848, 'wheat-3': 0.916, 'wheat-4': 0.861,
-    'corn-1': 0.199, 'corn-2': 0.871, 'corn-3': 0.916, 'corn-4': 0.918,
-    'carrot-1': 0.199, 'carrot-2': 0.912, 'carrot-3': 0.918, 'carrot-4': 0.916,
+    'wheat-1': 0.297, 'wheat-2': 0.629, 'wheat-3': 0.760, 'wheat-4': 0.748,
+    'corn-1': 0.352, 'corn-2': 0.592, 'corn-3': 0.889, 'corn-4': 0.920,
+    'carrot-1': 0.264, 'carrot-2': 0.535, 'carrot-3': 0.693, 'carrot-4': 0.871,
+};
+
+/** 每张房子图里内容占画布多少（贴底重排后实测），用来对齐墙体盒子和屋顶 */
+const HOUSE_FRAME: Record<number, { top: number; bottom: number; width: number }> = {
+    1: { top: 0.135, bottom: 0.998, width: 0.846 },
+    2: { top: 0.135, bottom: 0.998, width: 0.801 },
+    3: { top: 0.146, bottom: 0.998, width: 0.781 },
+    4: { top: 0.035, bottom: 0.998, width: 0.924 },
 };
 
 /** 房子每个阶段的配色 */
@@ -61,7 +69,7 @@ const HOUSE_TONE: Record<number, { wall: string; roof: string; hasRoof: boolean 
     1: { wall: '#8b7a68', roof: '#6d6154', hasRoof: false },
     2: { wall: '#c6a680', roof: '#8d949c', hasRoof: true },
     3: { wall: '#e2d5bd', roof: '#7d9464', hasRoof: true },
-    4: { wall: '#e3c48f', roof: '#c26a4a', hasRoof: true },
+    4: { wall: '#efe0c4', roof: '#2f6f6a', hasRoof: true },
 };
 
 const BASE = import.meta.env.BASE_URL;
@@ -159,8 +167,8 @@ export class FarmScene {
         this.renderer.domElement.style.touchAction = 'none';
 
         this.camera = new THREE.PerspectiveCamera(44, 1, 0.1, 120);
-        this.scene.background = new THREE.Color('#bfe3f2');
-        this.scene.fog = new THREE.Fog('#cfe6ef', 15, 52);
+        this.scene.background = new THREE.Color('#7fc8ea');
+        this.scene.fog = new THREE.Fog('#e8f0dc', 32, 90);
 
         this.buildLights();
         this.buildGround();
@@ -184,7 +192,7 @@ export class FarmScene {
     // ---------------------------------------------------------------- 场景搭建
 
     private buildLights() {
-        this.scene.add(new THREE.HemisphereLight('#e8f4ff', '#6f7f52', 1.15));
+        this.scene.add(new THREE.HemisphereLight('#fff6e0', '#7a8c4a', 1.15));
         const sun = new THREE.DirectionalLight('#fff3d8', 1.45);
         sun.position.set(-6, 9.5, 5.5);
         this.scene.add(sun);
@@ -238,7 +246,7 @@ export class FarmScene {
     }
 
     private buildGround() {
-        const grass = this.loadTex(`${BASE}farm/ground-grass.png`, 'grass', [4, 4]);
+        const grass = this.loadTex(`${BASE}farm/ground-grass.png`, 'grass', [8, 8]);
         const ground = new THREE.Mesh(
             new THREE.PlaneGeometry(64, 64),
             new THREE.MeshLambertMaterial({ map: grass }),
@@ -358,13 +366,14 @@ export class FarmScene {
         }
 
         const tone = HOUSE_TONE[stage] ?? HOUSE_TONE[1];
-        // 画布 512，内容大约在 y 0.22~0.94、x 0.11~0.89 之间
-        const canvasH = 5.15;
+        // 每阶段的图内容位置不同，按实测值对齐墙体盒子和屋顶
+        const frame = HOUSE_FRAME[stage] ?? HOUSE_FRAME[1];
+        const canvasH = 3.7;
         const canvasW = canvasH;
-        const contentTop = 0.224;
-        const contentBottom = 0.937;
+        const contentTop = frame.top;
+        const contentBottom = frame.bottom;
         const contentH = (contentBottom - contentTop) * canvasH;
-        const contentW = 0.782 * canvasW;
+        const contentW = frame.width * canvasW;
         const baseY = -(1 - contentBottom) * canvasH;
 
         // 墙体盒子：只要墙那一段，屋顶交给棱柱
@@ -442,12 +451,16 @@ export class FarmScene {
 
         addCard('prop-tree.png', -7.0, -4.6, 3.4);
         addCard('prop-tree.png', 3.6, -4.9, 2.8, Math.PI * 0.12);
-        addCard('prop-haystack.png', -6.1, -1.5, 1.6);
+        addCard('prop-haystack.png', -6.3, -1.6, 1.5);
         addCard('prop-well.png', -2.25, -2.55, 1.7);
         addCard('prop-bush.png', -7.6, -2.2, 1.2);
         addCard('prop-bush.png', 2.9, -3.6, 1.05);
         addCard('prop-rock.png', 3.2, 2.1, 0.6);
         addCard('prop-rock.png', -3.6, 3.1, 0.5);
+        addCard('prop-sakura.png', -8.8, -3.2, 3.1);
+        addCard('flower-1.png', 1.15, -1.25, 1.1);
+        addCard('flower-3.png', 5.1, -0.7, 0.95);
+        addCard('flower-2.png', -4.35, 3.35, 1.0);
 
         // 栅栏：沿后排横向排开，朝观众
         for (let i = 0; i < 5; i++) {
@@ -458,11 +471,11 @@ export class FarmScene {
                 alphaTest: 0.4,
                 side: THREE.DoubleSide,
             });
-            const seg = new THREE.Mesh(new THREE.PlaneGeometry(1.32, 0.66), mat);
-            seg.position.set(-5.4 + i * 1.26, 0.33, -4.85);
+            const seg = new THREE.Mesh(new THREE.PlaneGeometry(1.32, 1.32), mat);
+            seg.position.set(-5.4 + i * 1.26, 0.66, -4.85);
             this.scene.add(seg);
             this.billboards.push(seg);
-            this.blob(0.78, 0.3, seg.position.x, 0.012, seg.position.z - 0.04, 0.7);
+            this.blob(1.2, 0.34, seg.position.x, 0.012, seg.position.z - 0.04, 0.7);
         }
     }
 
