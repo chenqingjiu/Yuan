@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import type {ThinkingChainStyleId} from '../../utils/psycheAppearance';
 import type { ApiPreset, DialogueApiConfig } from '../../types';
 import ThinkingTranslationSettings from './ThinkingTranslationSettings';
+import './thinkingSettings.css';
 
 interface ThinkingChainSettingsValue {
     enabled: boolean;
@@ -125,7 +126,10 @@ const ThinkingChainSettingsModal: React.FC<Props> = ({ isOpen, onClose, value, o
 
                     {/* 4. 心象翻译 API —— 长按心象卡片选择「翻译成中文」时才调用 */}
                     {onChangeTranslationApi && dialogueApi && (
-                        <section className="rounded-2xl bg-slate-50/80 border border-slate-200/70 px-3.5 py-3">
+                        <section
+                            className="thinking-settings-panel rounded-2xl bg-slate-50/80 border border-slate-200/70 px-3.5 py-3"
+                            style={{ display: 'block', width: '100%', maxWidth: 'none', maxHeight: 'none', overflow: 'visible', borderRadius: 16, background: 'transparent' }}
+                        >
                             <ThinkingTranslationSettings
                                 value={translationApi}
                                 dialogueApi={dialogueApi}

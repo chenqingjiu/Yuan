@@ -17,11 +17,13 @@ import {validateDecoration} from '../../utils/chatDecoration';
 import {buildChatFineTuneCss} from '../../utils/chatFineTuneCss';
 import {CHAT_PREVIEW_SCENES} from '../../utils/chatPreviewFixtures';
 import {BEAUTY_PREVIEW_AVATAR} from '../../utils/beautyPreviewAssets';
-import type {CharacterBuff} from '../../types';
+import type {CharacterBuff, CharacterProfile} from '../../types';
+import ChatCharacterProfile from './ChatCharacterProfile';
 import baseCss from './chatPreview.generated.css?inline';
 import cardCss from './ChatCardSurface.css?inline';
 import qixiCss from './QixiEventCard.css?inline';
 import sarCss from '../sar/sar-speech.css?inline';
+import profileCss from './ChatCharacterProfile.css?raw';
 
 const noop=()=>{};
 // Fictional fixture states only; never read or update a real character's emotions.
@@ -34,6 +36,14 @@ const defaultBubble=PRESET_THEMES.default;
 /** Static rendering intentionally never mounts effects or binds actual message actions. */
 export function renderChatDecorationSample(value:unknown,sceneId:string,thumbnailPart?:DecorationThumbnailPart,state:DecorationPreviewState={}) {
  const p=validateDecoration(value).parts,l=p.layout||{};
+ // 角色名片装扮：用名片组件渲染一张示例名片作为缩略图/预览场景。
+ if(thumbnailPart==='profile'||sceneId.startsWith('profile-')){
+  const tab=sceneId==='profile-settings'?'设定':sceneId==='profile-schedule'?'日程':'当前';
+  const character={id:'profile-preview',name:'林遥',avatar:BEAUTY_PREVIEW_AVATAR,description:'旧书店的朋友',scheduleFeatureEnabled:true,emotionConfig:{enabled:true},activeBuffs:previewBuffs} as CharacterProfile;
+  const schedule={id:'preview',charId:character.id,date:'2026-09-26',generatedAt:0,slots:[{startTime:'09:00',activity:'整理书架',innerThought:'把靠窗的位置留给你。'},{startTime:'14:00',activity:'河边散步'}]};
+  const markup=renderToStaticMarkup(<ChatCharacterProfile preview character={character} schedule={schedule} initialTab={tab} onClose={noop} onSchedule={noop} onPlayTheater={noop} onMemory={noop}/>);
+  return {markup,css:baseCss+'\n'+profileCss+'\n.beauty-preview-body{display:grid;place-items:center;width:360px;height:'+ (thumbnailPart?'360':'600')+'px;background:#e8e5eb}.beauty-preview-body .chat-profile-dialog{position:relative;inset:auto;max-height:95%}\n'+(p.profile?.customCss||'')};
+ }
  if(p.collaboration)return renderCollaborationBeautySample(p.collaboration,!!thumbnailPart);
  if(p.date||p.story){
   const style=meetingAppearance(p.date||p.story);
