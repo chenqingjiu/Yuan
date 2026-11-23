@@ -17,7 +17,7 @@ import {
     water,
     visitorWater,
     pushTrail,
-} from "./garden.browser.js?v=visit1123-v1";
+} from "./garden.browser.js?v=visit1123-v2";
 
 const PATROL_MS = 8 * 60 * 60 * 1000;
 const STEAL_GAP = 20 * 60 * 60 * 1000;

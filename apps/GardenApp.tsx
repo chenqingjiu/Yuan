@@ -53,6 +53,9 @@ export default function GardenApp({ onBack }: { onBack: () => void }) {
             /* 隐私模式下存不了，本次会话照样可用 */
         }
         setPicked(id);
+        /* 换人 = 回自己家。之前串门留下的 visitTo 如果不清，选完还是客人视角：
+           能帮浇水、能帮着收，但「打理自己那块地」的按钮点了会被当成串门拒掉。 */
+        setVisitTo(null);
         setChoosing(false);
     };
 

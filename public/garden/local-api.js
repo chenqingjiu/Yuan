@@ -10,7 +10,7 @@ import {
     harvest,
     visitorWater,
     pushTrail,
-} from "./garden.browser.js?v=visit1123-v1";
+} from "./garden.browser.js?v=visit1123-v2";
 import { startPatrol } from "./patrol.js?v=patrol1123-v1";
 
 /* 兜底：局域网 http 访问时 crypto.randomUUID 可能不存在（非安全上下文），

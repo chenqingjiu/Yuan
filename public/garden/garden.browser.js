@@ -6355,8 +6355,6 @@ function water(farm, plotId, by, isOwner) {
 var remainingTicks = (c) => c.growTicks - c.progress;
 function visitorWater(farm, visitorId, plotId, by, now) {
   const day = currentDayIndex(now);
-  if (farm.waterVisits?.[visitorId] === day)
-    return { ok: false, error: "已浇过水，明天再来吧。" };
   let plot;
   if (plotId != null) {
     plot = farm.plots.find((p) => p.id === plotId);
@@ -6370,12 +6368,17 @@ function visitorWater(farm, visitorId, plotId, by, now) {
       return { ok: false, error: "对方没有可浇水的作物" };
     plot = growing.reduce((best, p) => remainingTicks(p.crop) < remainingTicks(best.crop) ? p : best);
   }
+  // 限制按「哪块地」算，不是按「今天来没来过」：一天只准浇一块地的话，
+  // 帮人把几块地都照看一遍就成了不可能的事。
+  const visitKey = `${visitorId}:${plot.id}`;
+  if (farm.waterVisits?.[visitKey] === day)
+    return { ok: false, error: `${plot.id} 号地今天已经浇过了，明天再来吧。` };
   const crop = plot.crop;
   crop.progress = Math.min(crop.growTicks, crop.progress + 1);
   const ripened = crop.progress >= crop.growTicks;
   if (ripened)
     crop.ripe = true;
-  (farm.waterVisits ??= {})[visitorId] = day;
+  (farm.waterVisits ??= {})[visitKey] = day;
   pushLog(farm, `${by}帮 ${plot.id} 号地浇水，加速 30 分钟${ripened ? "，正好催熟" : ""}`);
   pushTrail(farm, { t: now, kind: "watered", by, plotId: plot.id });
   return { ok: true, plotId: plot.id, ripened };
