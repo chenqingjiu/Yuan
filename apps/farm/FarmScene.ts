@@ -75,6 +75,14 @@ const HOUSE_TONE: Record<number, { wall: string; roof: string; hasRoof: boolean 
 
 const BASE = import.meta.env.BASE_URL;
 
+/**
+ * 整块 3D 画面的色调。
+ *
+ * 只做一次 CSS 合成，不动贴图：以后换素材不用重新出图，也不会把「贴图 = 最终色」这条规则打破。
+ * 数值是照着美术给的目标画面反推的 —— 草更翠、屋顶更橙、天空更蓝、中间调更通透。
+ */
+const SCENE_FILTER = 'saturate(1.2) brightness(1.08)';
+
 export class FarmScene {
     private renderer: THREE.WebGLRenderer;
     private scene = new THREE.Scene();
@@ -168,6 +176,7 @@ export class FarmScene {
         this.renderer.domElement.style.width = '100%';
         this.renderer.domElement.style.height = '100%';
         this.renderer.domElement.style.touchAction = 'none';
+        this.renderer.domElement.style.filter = SCENE_FILTER;
 
         this.camera = new THREE.PerspectiveCamera(44, 1, 0.1, 120);
         this.scene.background = new THREE.Color('#7fc8ea');
@@ -495,7 +504,7 @@ export class FarmScene {
         addCard('prop-rock.png', 3.2, 2.1, 0.6);
         addCard('prop-rock.png', -3.6, 3.1, 0.5);
         addCard('prop-sakura.png', -8.8, -3.2, 3.1);
-        addCard('flower-1.png', 1.15, -1.25, 1.1);
+        addCard('flower-1.png', -1.9, 1.55, 0.95);
         addCard('flower-3.png', 5.1, -0.7, 0.95);
         addCard('flower-2.png', -4.35, 3.35, 1.0);
 
