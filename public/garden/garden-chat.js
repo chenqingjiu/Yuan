@@ -113,7 +113,11 @@
         '.note time{display:block;font-size:10.5px;color:#b09a7c;margin-bottom:3px}',
         '.note p{margin:0;font-size:13.5px;line-height:1.6;color:#4e4237;white-space:pre-wrap;word-break:break-word}',
         '.note b{color:#8a6540;font-weight:800}',
-        '.note-empty{padding:34px 6px;text-align:center;font-size:12.5px;color:#b09a7c;line-height:1.7}'
+        '.note-empty{padding:34px 6px;text-align:center;font-size:12.5px;color:#b09a7c;line-height:1.7}',
+        '#board-foot{flex:none;padding:10px 14px calc(12px + env(safe-area-inset-bottom,0px));border-top:1px dashed #e2d3b8;text-align:center}',
+        '#board-run{border:1.5px solid #dcc9a8;background:#fff;color:#8a6540;font-size:12.5px;font-weight:800;',
+        'border-radius:12px;padding:8px 16px;cursor:pointer;font-family:inherit}',
+        '#board-run:disabled{opacity:.5;cursor:default}'
     ].join('');
     root.appendChild(boardStyle);
 
@@ -121,7 +125,8 @@
     board.id = 'board';
     board.innerHTML = '<div id="board-head"><h3>花园留言板</h3><small id="board-sub"></small>'
         + '<button id="board-close" type="button" aria-label="收起留言板">✕</button></div>'
-        + '<div id="board-list"></div>';
+        + '<div id="board-list"></div>'
+        + '<div id="board-foot"><button id="board-run" type="button">让 TA 现在巡一圈</button></div>';
     root.appendChild(board);
 
     var boardList = root.getElementById('board-list');
@@ -164,6 +169,22 @@
 
     window.__rhGardenBoardOpen = function () { setBoard(true); };
     root.getElementById('board-close').addEventListener('click', function () { setBoard(false); });
+
+    /* 不想等 8 小时的时候，按一下就能让 TA 现在去转一圈 */
+    var runBtn = root.getElementById('board-run');
+    runBtn.addEventListener('click', function () {
+        var api = window.__rhGardenBoard;
+        if (runBtn.disabled || !api || typeof api.run !== 'function') return;
+        runBtn.disabled = true;
+        runBtn.textContent = '去园子里了…';
+        Promise.resolve(api.run())
+            .then(function () { renderBoard(); })
+            .catch(function () { })
+            .then(function () {
+                runBtn.disabled = false;
+                runBtn.textContent = '让 TA 现在巡一圈';
+            });
+    });
     window.addEventListener('rainholm:garden-patrol', function () {
         if (board.classList.contains('open')) renderBoard();
     });
