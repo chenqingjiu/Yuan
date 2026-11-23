@@ -139,7 +139,7 @@ export const DECOR: Record<DecorId, DecorDef> = {
         max: 1,
         size: 3.1,
         slots: [
-            { x: 3.6, z: -4.4, h: 3.1 },
+            { x: 3.6, z: -5.6, h: 3.1 },
         ],
         desc: '最贵的一棵，风一吹全是花瓣',
     },
