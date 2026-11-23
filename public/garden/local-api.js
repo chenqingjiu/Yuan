@@ -2,6 +2,28 @@
    引擎用的是同一份 SceneService，规则不会漂。存档落在 IndexedDB。 */
 import { SceneService, ensureScenes, newRecord } from "./garden.browser.js";
 
+/* 兜底：局域网 http 访问时 crypto.randomUUID 可能不存在（非安全上下文），
+   而 app.js 拿它当幂等号，缺了会直接种不了地。 */
+(function ensureRandomUUID() {
+    if (globalThis.crypto && typeof globalThis.crypto.randomUUID === "function") return;
+    const uuid = () => {
+        const b = new Uint8Array(16);
+        if (globalThis.crypto?.getRandomValues) globalThis.crypto.getRandomValues(b);
+        else for (let i = 0; i < 16; i++) b[i] = Math.floor(Math.random() * 256);
+        b[6] = (b[6] & 0x0f) | 0x40;
+        b[8] = (b[8] & 0x3f) | 0x80;
+        const h = Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+        return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+    };
+    try {
+        globalThis.crypto.randomUUID = uuid;
+    } catch (_) {
+        try {
+            Object.defineProperty(globalThis.crypto, "randomUUID", { value: uuid, configurable: true });
+        } catch (__) {}
+    }
+})();
+
 const DB_NAME = "rainholm-garden-local";
 const DB_VER = 1;
 const STORE = "save";
