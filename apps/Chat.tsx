@@ -5,7 +5,7 @@ import {homePhoneAppearance,HOME_PHONE_BUBBLES} from './room3d/homePhoneAppearan
 import { publishReplyDisplay, stopReplyRuns } from '../utils/chatReplyCancellation';
 import { stopInstantChat } from '../utils/amsgInstantChat';
 import {resolvePsycheAppearance} from '../utils/psycheAppearance';
-import { startsNewMessageGroup } from '../utils/chatMessageGrouping';
+import { startsNewMessageGroup, computeTimeSegmentStarts } from '../utils/chatMessageGrouping';
 import EmojiExportDialog from '../components/chat/EmojiExportDialog';
 import BlobRefStyle from '../components/chat/BlobRefStyle';
 import React, { useState, useEffect, useRef, useLayoutEffect, useMemo, useCallback } from 'react';
@@ -108,6 +108,8 @@ import ActiveMsg2SettingsModal from '../components/chat/ActiveMsg2SettingsModal'
 import AwayMessageSettingsModal from '../components/chat/AwayMessageSettingsModal';
 import { cancelCloudAwayTasks } from '../utils/awayMessage';
 import ThinkingChainSettingsModal from '../components/chat/ThinkingChainSettingsModal';
+import { translateThinkingMessage } from '../utils/thinkingTranslation';
+import { resolveDialogueApi } from '../utils/characterApi';
 import LocationPickerModal from '../components/chat/LocationPickerModal';
 import { useChatAI } from '../hooks/useChatAI';
 import { useChatAutoReply } from '../hooks/useChatAutoReply';
@@ -193,7 +195,7 @@ const INSTANT_VOICE_SCAN_WINDOW_MS = 30_000;
 
 export interface HomePhoneChatProps {characterId:string;getContext:()=>string;onBack:()=>void}
 const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
-    const { activeApp, characters, activeCharacterId: osActiveCharacterId, setActiveCharacterId, addCharacter, updateCharacter, updateUserProfile, apiConfig, apiPresets, availableModels, addApiPreset, closeApp, openApp, customThemes, addCustomTheme, removeCustomTheme, addWorldbook, updateTheme, saveAppearancePreset, addToast, showError, userProfile, lastMsgTimestamp, groups, characterGroups, clearUnread, unreadMessages, realtimeConfig, memoryPalaceConfig, updateMemoryPalaceConfig, remoteVectorConfig, syncEmotionApiToAllCharacters, theme: baseOsTheme, openDateWithChar, addFanwaiStory, addCollectedLetter, collectedLetters, chatDeepLinkCharId, consumeChatDeepLink } = useOS();
+    const { activeApp, characters, activeCharacterId: osActiveCharacterId, setActiveCharacterId, addCharacter, updateCharacter, updateUserProfile, apiConfig, updateApiConfig, apiPresets, availableModels, addApiPreset, closeApp, openApp, customThemes, addCustomTheme, removeCustomTheme, addWorldbook, updateTheme, saveAppearancePreset, addToast, showError, userProfile, lastMsgTimestamp, groups, characterGroups, clearUnread, unreadMessages, realtimeConfig, memoryPalaceConfig, updateMemoryPalaceConfig, remoteVectorConfig, syncEmotionApiToAllCharacters, theme: baseOsTheme, openDateWithChar, addFanwaiStory, addCollectedLetter, collectedLetters, chatDeepLinkCharId, consumeChatDeepLink } = useOS();
     const activeCharacterId=homePhone?.characterId??osActiveCharacterId;
     const osTheme = useMemo(()=>homePhone?homePhoneAppearance(baseOsTheme):resolveDecorationTheme(baseOsTheme,characters.find(c=>c.id===activeCharacterId)||characters[0]),[baseOsTheme,characters,activeCharacterId,!!homePhone]);
     const localDateKey = useLocalDateKey();
@@ -4208,6 +4210,13 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
         return displayMessages.filter(message => !pending.has(message.id));
     }, [displayMessages, streamingBubbles, streamingThinking, streamingHandoverIds, selectionMode]);
 
+    // 时间条美化：按间隔（头像下方模式按天）计算哪些消息开启新时间段。
+    const segmentByDay = osTheme.chatTimestampPosition === 'below_avatar';
+    const timeSegmentStarts = useMemo(
+        () => computeTimeSegmentStarts(renderedMessages, segmentByDay),
+        [renderedMessages, segmentByDay],
+    );
+
     useLayoutEffect(() => {
         publishReplyDisplay(activeCharacterId, renderedMessages.map(message => message.id), streamingBubbles);
     }, [activeCharacterId, renderedMessages, streamingBubbles]);
@@ -4241,11 +4250,26 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
         }
     }, [displayMessages]);
 
+    // 长按心象卡片 → 翻译成中文。仅在用户主动触发时调用，译文落库后写回消息状态。
+    const handleTranslateThinking = useCallback(async (message: Message) => {
+        if (!apiConfig.thinkingTranslationApi && !message.metadata?.thinkingChainTranslation) {
+            setShowThinkingChainModal(true);
+            throw new Error('请先配置翻译 API，然后再长按翻译。');
+        }
+        const translation = await translateThinkingMessage(message, apiConfig.thinkingTranslationApi, char?.name);
+        const source = String(message.metadata?.thinkingChain || '').trim();
+        setMessages(previous => previous.map(row => row.id === message.id && row.charId === message.charId
+            && String(row.metadata?.thinkingChain || '').trim() === source
+            ? { ...row, metadata: { ...row.metadata, thinkingChainTranslation: translation } } : row));
+        return translation;
+    }, [apiConfig.thinkingTranslationApi, char?.name]);
+
     // 稳定的思维链配置对象：只在角色/样式变化时重建，避免每次渲染新建对象击穿 MessageItem.memo。
     const thinkingChainOptions = useMemo(() => ({
         ...resolvePsycheAppearance(osTheme, char),
         onOpenSettings: () => setShowThinkingChainModal(true),
-    }), [char?.thinkingChainStyle, char?.thinkingChainCustomColors, osTheme.chatPsyche]);
+        onTranslate: handleTranslateThinking,
+    }), [char?.thinkingChainStyle, char?.thinkingChainCustomColors, osTheme.chatPsyche, handleTranslateThinking]);
 
     // 工具痕迹那行灰字要贴着气泡走，所以把气泡自带的组间距（MessageItem 里那组
     // mb-3 / mb-6 / mb-8）抵掉大半。组内的气泡本来就挨着，不用抵。
@@ -5041,6 +5065,8 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
                             bubbleVariant={osTheme.chatBubbleStyle}
                             messageSpacing={osTheme.chatMessageSpacing}
                             showTimestamp={osTheme.chatShowTimestamp}
+                            timestampPosition={osTheme.chatTimestampPosition}
+                            startsTimeSegment={timeSegmentStarts[i]}
                             suppressEntranceAnimation={suppressEntranceAnimation}
                             onMcdSendCart={handleMcdSendCart}
                             onMcdCandidate={handleMcdCandidate}
@@ -5107,6 +5133,8 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
                                     bubbleVariant={osTheme.chatBubbleStyle}
                                     messageSpacing={osTheme.chatMessageSpacing}
                                     showTimestamp={osTheme.chatShowTimestamp}
+                                    timestampPosition={osTheme.chatTimestampPosition}
+                                    startsTimeSegment={i === 0}
                                     thinkingChainOptions={thinkingChainOptions}
                                 />
                             </div>
@@ -5339,6 +5367,11 @@ const Chat: React.FC<{homePhone?:HomePhoneChatProps}> = ({homePhone}) => {
                         if (next.customCss !== undefined) patch.thinkingChainCustomCss = next.customCss;
                         if (Object.keys(patch).length) updateCharacter(char.id, patch as any);
                     }}
+                    translationApi={apiConfig.thinkingTranslationApi}
+                    dialogueApi={resolveDialogueApi(apiConfig, char)}
+                    apiPresets={apiPresets}
+                    onChangeTranslationApi={(api) => updateApiConfig({ thinkingTranslationApi: api })}
+                    onAddApiPreset={(name, config) => addApiPreset(name, config, '心象翻译')}
                 />
             )}
 

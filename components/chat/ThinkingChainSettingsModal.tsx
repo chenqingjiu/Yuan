@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import type {ThinkingChainStyleId} from '../../utils/psycheAppearance';
+import type { ApiPreset, DialogueApiConfig } from '../../types';
+import ThinkingTranslationSettings from './ThinkingTranslationSettings';
 
 interface ThinkingChainSettingsValue {
     enabled: boolean;
@@ -15,9 +17,14 @@ interface Props {
     onClose: () => void;
     value: ThinkingChainSettingsValue;
     onChange: (next: Partial<ThinkingChainSettingsValue>) => void;
+    translationApi?: DialogueApiConfig;
+    dialogueApi?: DialogueApiConfig;
+    apiPresets?: ApiPreset[];
+    onChangeTranslationApi?: (api: DialogueApiConfig | undefined) => void;
+    onAddApiPreset?: (name: string, api: DialogueApiConfig) => void;
 }
 
-const ThinkingChainSettingsModal: React.FC<Props> = ({ isOpen, onClose, value, onChange }) => {
+const ThinkingChainSettingsModal: React.FC<Props> = ({ isOpen, onClose, value, onChange, translationApi, dialogueApi, apiPresets, onChangeTranslationApi, onAddApiPreset }) => {
     const [draftPrompt, setDraftPrompt] = useState(value.customPrompt || '');
     useEffect(() => { if (isOpen) setDraftPrompt(value.customPrompt || ''); }, [isOpen, value.customPrompt]);
     if (!isOpen) return null;
@@ -115,6 +122,19 @@ const ThinkingChainSettingsModal: React.FC<Props> = ({ isOpen, onClose, value, o
                         />
                         <div className="text-[9.5px] text-slate-400 mt-1">留空 = 仅使用原生提示词。</div>
                     </section>
+
+                    {/* 4. 心象翻译 API —— 长按心象卡片选择「翻译成中文」时才调用 */}
+                    {onChangeTranslationApi && dialogueApi && (
+                        <section className="rounded-2xl bg-slate-50/80 border border-slate-200/70 px-3.5 py-3">
+                            <ThinkingTranslationSettings
+                                value={translationApi}
+                                dialogueApi={dialogueApi}
+                                presets={apiPresets}
+                                onChange={onChangeTranslationApi}
+                                onAddPreset={onAddApiPreset}
+                            />
+                        </section>
+                    )}
                 </div>
             </div>
         </div>
