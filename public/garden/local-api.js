@@ -12,6 +12,7 @@ import {
     pushTrail,
 } from "./garden.browser.js?v=visit1123-v2";
 import { startPatrol } from "./patrol.js?v=patrol1123-v1";
+import { startAutoTend } from "./auto-tend.js?v=autotend1123-v1";
 
 /* 兜底：局域网 http 访问时 crypto.randomUUID 可能不存在（非安全上下文），
    而 app.js 拿它当幂等号，缺了会直接种不了地。 */
@@ -186,9 +187,12 @@ ready = (async () => {
     }
     ensureScenes(record, Date.now());
     scheduleSave();
-    /* 串门时不替主人巡检：否则一进她家就把熟的全收走、还以她的名义写留言发私聊，
-       玩家想「帮一把」反而没得帮。巡检只在主人自己的院子里跑。 */
-    if (!VISIT) startPatrol();
+    /* 主人自己的院子（王愿那种）：照旧走巡检 + 私人互动。
+       串门进别人的院子（sully 那种）：改走程序代管 —— 按固定规则替主人把地
+       种/浇/收好，写进她的存档和留言板；玩家的「帮忙」按钮仍然是 visitAction，
+       两条路互不干扰。 */
+    if (VISIT) startAutoTend();
+    else startPatrol();
 })();
 
 const json = (body, status = 200) =>
@@ -310,11 +314,17 @@ window.fetch = async function (input, init) {
     const headers = new Headers(init?.headers || {});
     const key = headers.get("Idempotency-Key") || "";
     const scene = body.scene || "garden";
-    if (VISIT && scene === "garden") {
+    /* 串门时默认的「帮忙」走 visitAction（不花钱、收成归主人）。
+       但 sully 对话里的动作标记是「她以主人身份自己动手」——请求头带 owner，
+       这时按主人规则走：花自己的钱种、正常浇水、收成进自己篮子，弹窗也不写替TA收。 */
+    const asOwner = headers.get("X-Garden-Actor") === "owner";
+    if (VISIT && scene === "garden" && !asOwner) {
         const result = await visitAction(body, key);
         return json(result, result.status ?? 200);
     }
     const result = await service.action("local", scene, body, key);
+    /* sully 以主人身份收获时，弹窗别写「替TA收了」*/
+    if (asOwner && result?.reveal) result.reveal.byOwner = true;
     return json(result, result.status ?? 200);
 };
 

@@ -194,7 +194,9 @@
     });
 
     /* 不想等 8 小时的时候，按一下就能让 TA 现在去转一圈 */
+    var runLabel = function () { return window.__rhGardenBoardLabel || '让 TA 现在巡一圈'; };
     var runBtn = root.getElementById('board-run');
+    runBtn.textContent = runLabel();
     runBtn.addEventListener('click', function () {
         var api = window.__rhGardenBoard;
         if (runBtn.disabled || !api || typeof api.run !== 'function') return;
@@ -205,7 +207,7 @@
             .catch(function () { })
             .then(function () {
                 runBtn.disabled = false;
-                runBtn.textContent = '让 TA 现在巡一圈';
+                runBtn.textContent = runLabel();
             });
     });
     window.addEventListener('rainholm:garden-patrol', function () {
@@ -373,6 +375,9 @@
     function doAct(act) {
         var g = window.RainholmGarden;
         var plot = Number(act.plot);
+        /* 串门时也在自己家：AI 的动作按主人身份走，别套「访客送一棵/帮收」那套。
+           玩家手点地块按钮不经这里，仍是帮忙规则。用 once 标记避免影响后续点击。 */
+        if (new URLSearchParams(location.search).get('visit') === '1') window.__rhGardenActorUntil = Date.now() + 1200;
         try {
             if (act.action === 'plant') g.plant(plot, act.seed === 'fantasy' ? 'fantasy' : 'common');
             else if (act.action === 'water') g.water(plot);
