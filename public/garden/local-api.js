@@ -7,6 +7,7 @@ import {
     gardenView,
     advance,
     plant,
+    harvest,
     visitorWater,
     pushTrail,
 } from "./garden.browser.js?v=visit1123-v1";
@@ -50,10 +51,11 @@ const KEY = OWNER;
 /** 旧 "main" 存档只搬一次家，搬过就在本地记一笔，别让后来的角色再抢一遍 */
 const ADOPT_FLAG = "rainholm-garden:adopted";
 
-/* 做客时把「收」从地块卡上拿掉：收成只归主人，留在按钮上只会点一次弹一次错。 */
+/* 做客时也能帮忙收熟了的（收成归主人，见 visitAction）。
+   以前这里把「收」按钮整块藏了，现在保留 —— 只把文案换成「帮 TA 收」更好认。 */
 if (VISIT) {
     const visitStyle = document.createElement("style");
-    visitStyle.textContent = 'body.rh-visit [data-action="harvest"]{display:none!important}';
+    visitStyle.textContent = 'body.rh-visit [data-action="harvest"]::after{content:"（帮她收）";font-size:.72em;opacity:.75}';
     (document.head || document.documentElement).appendChild(visitStyle);
     document.addEventListener("DOMContentLoaded", () => document.body.classList.add("rh-visit"), { once: true });
     if (document.body) document.body.classList.add("rh-visit");
@@ -184,7 +186,9 @@ ready = (async () => {
     }
     ensureScenes(record, Date.now());
     scheduleSave();
-    startPatrol();
+    /* 串门时不替主人巡检：否则一进她家就把熟的全收走、还以她的名义写留言发私聊，
+       玩家想「帮一把」反而没得帮。巡检只在主人自己的院子里跑。 */
+    if (!VISIT) startPatrol();
 })();
 
 const json = (body, status = 200) =>
@@ -194,8 +198,9 @@ const json = (body, status = 200) =>
     });
 
 /* ── 串门 ────────────────────────────────────────────────────────────────
-   在别人家：能帮浇水（真 +1 tick）、能送一棵（不花他的钱）。
-   收不了他的菜 —— 收成只在主人自己手里，这条不通融。 */
+   在别人家：能帮浇水（真 +1 tick）、能送一棵（不花他的钱）、能帮他收熟的。
+   收成全部归主人 —— 金币、图鉴、收获记录都写进她的存档，访客自己什么都不拿。
+   这样她的花不会因为没人来而烂在地里，也不存在「左手倒右手」。 */
 function visitAction(body, key) {
     const now = Date.now();
     if (body.revision !== record.revision) {
@@ -227,7 +232,32 @@ function visitAction(body, key) {
         return { ok: true, state: gardenView(record, now), note: "给他种下一棵" };
     }
 
-    return { ok: false, status: 400, error: "在别人家只能浇水、送一棵，收成得主人自己来", state: gardenView(record, now) };
+    if (body.action === "harvest") {
+        const coinsBefore = farm.coins;
+        const r = harvest(farm, plotId, now);
+        if (!r.ok) return { ok: false, status: 400, error: r.error, state: gardenView(record, now) };
+        record.wallet = farm.coins;                /* 进的是主人的钱包 */
+        const reveal = {
+            id: r.crop.id,
+            name: r.crop.name,
+            rarity: r.crop.rarity,
+            quality: r.quality.name,
+            value: farm.coins - coinsBefore - (r.codexReward ?? 0),
+            codexReward: r.codexReward,
+            isNew: r.isNew,
+            at: now,
+            bonus: r.bonus ? { name: r.bonus.name, text: r.bonus.text } : null,
+        };
+        record.history = Array.isArray(record.history) ? record.history : [];
+        record.history.unshift(reveal);
+        record.history = record.history.slice(0, 100);
+        pushTrail(farm, { t: now, kind: "helped", by: "你", plotId });
+        record.revision++;
+        scheduleSave();
+        return { ok: true, state: gardenView(record, now), reveal, note: "替 TA 收了 " + r.crop.name };
+    }
+
+    return { ok: false, status: 400, error: "在别人家只能浇水、送一棵、帮忙收熟的", state: gardenView(record, now) };
 }
 
 const realFetch = window.fetch.bind(window);

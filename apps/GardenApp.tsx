@@ -339,7 +339,7 @@ export default function GardenApp({ onBack }: { onBack: () => void }) {
                     className="absolute left-1/2 -translate-x-1/2 z-20 rounded-full bg-white/85 backdrop-blur px-3 py-1 text-[11px] font-bold text-amber-800 shadow-sm border border-amber-200/70 whitespace-nowrap"
                     style={{ top: 'calc(var(--safe-top, 0px) + 8px)' }}
                 >
-                    在 {char?.name || '对方'} 家做客 · 只能浇水、送一棵
+                    在 {char?.name || '对方'} 家做客 · 能浇水、送一棵、帮着收
                 </div>
             )}
         </div>

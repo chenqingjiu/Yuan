@@ -73,14 +73,18 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # 站点必须是「纯静态资产」：一旦 wrangler.jsonc 出现 main / assets.binding /
-      # assets.run_worker_first，或有人加了 worker/site/index.ts，部署形态就变了。
-      # 这里直接拦住，避免手滑把静态站点改成带 Worker 脚本的形态。
+      # 站点形态：静态资产 + 一个只负责 404 的入口 worker。
+      # 早先这里是一刀切「出现 main 就报错」，但 wrangler.jsonc 的 main 一直指向
+      # worker/static-site-not-found.ts（assets 未命中时兜底 404），于是每次部署都
+      # 在这一步红掉——「推了但线上没变」的元凶之一。现在只放行这一个入口，
+      # 仍禁止 assets.binding / run_worker_first / worker/site/index.ts 这些会改变
+      # 部署形态的配置。
       - name: Verify assets-only configuration
         run: >-
           node -e "const fs=require('fs');const c=JSON.parse(fs.readFileSync('wrangler.jsonc','utf8'));
-          if(c.main||c.assets?.binding||c.assets?.run_worker_first||fs.existsSync('worker/site/index.ts'))
-          throw new Error('Cloudflare site deployment must remain static-assets-only')"
+          const allowedMain='worker/static-site-not-found.ts';
+          if((c.main&&c.main!==allowedMain)||c.assets?.binding||c.assets?.run_worker_first||fs.existsSync('worker/site/index.ts'))
+          throw new Error('Cloudflare site deployment must stay static assets plus the 404 handler (wrangler.jsonc main = '+allowedMain+')')"
 
       # 构建发生在 main 上（release 分支），vite.config.ts 据此隐藏「开发中内容」角标
       # （CI 是 detached HEAD，vite.config 会读 GITHUB_REF_NAME 拿到 main），
