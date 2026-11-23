@@ -33,14 +33,14 @@ export default function GameHubApp() {
                                 <span className="w-11 h-11 rounded-xl bg-rose-400 flex items-center justify-center text-2xl shadow-sm">🌸</span>
                                 <div className="flex-1">
                                     <p className="text-[15px] font-black text-slate-800">小花园</p>
-                                    <p className="text-[11px] text-slate-500 mt-0.5">手绘菜地 · 浇水攒运气 · 收成才知道种出什么</p>
+                                    <p className="text-[11px] text-slate-500 mt-0.5">手绘菜地 · 挑一个人一起种 · 边干活边说话</p>
                                 </div>
                                 <span className="text-slate-400">›</span>
                             </div>
                             <div className="flex gap-2 mt-2">
                                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/70 text-slate-500">6 块田</span>
                                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/70 text-slate-500">8 个花盆</span>
-                                <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/70 text-slate-500">123 种作物</span>
+                                <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/70 text-slate-500">记得住聊天</span>
                             </div>
                         </button>
 

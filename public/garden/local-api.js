@@ -133,6 +133,16 @@ window.fetch = async function (input, init) {
     if (path.endsWith("/api/cat/black")) {
         return json({ ok: false, error: "本地版没有 AI 接口" }, 404);
     }
+    /* 玩家在花园里说的话：转给对话面板 → 宿主那侧生成回复。
+       面板自己也会冒泡，这里只负责不报 404。 */
+    if (path.endsWith("/api/messages") && (init?.method || "GET").toUpperCase() === "POST") {
+        let text = "";
+        try {
+            text = JSON.parse(init?.body ?? "{}").text || "";
+        } catch (_) { }
+        if (text && typeof window.__rhSayToChat === "function") window.__rhSayToChat(text);
+        return json({ ok: true });
+    }
 
     const isState = path.endsWith("/api/state");
     const isAction = path.endsWith("/api/action");

@@ -2107,6 +2107,19 @@
      mount 里再 await 它一次。 */
   var walkMapReady = loadWalkMap();
 
+  /* 宿主（apps/GardenApp.tsx）把对话递进来，让对应的猫冒个泡。
+     who: "white" 玩家 / "black" AI；气泡只放前 60 个码点，全文在对话面板里。 */
+  window.__rhCatSpeak = function (who, text, ms) {
+    if (dead) return;
+    var i = catIndex(who === "white" ? "white" : "black");
+    if (i < 0 || !hits[i]) return;
+    var body = String(text || "").trim();
+    if (!body) return;
+    var clip = Array.from(body).slice(0, 60).join("");
+    if (CATS[i].st === "nap") wake(i, "poke");
+    meow(i, clip, ms || 8000, true);
+  };
+
   /* 等 app.js 把世界铺好（#world 有尺寸了）再上岗；ready 事件没赶上就 1.4 秒兜底。 */
   window.addEventListener("rainholm:garden-ready", function () { setTimeout(mount, 0); });
   setTimeout(function () { if (!mounted && !dead) mount(); }, 1400);
