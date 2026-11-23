@@ -38,9 +38,11 @@ const VersionInfo: React.FC = () => {
     // available = 面板当前是否可用（非 prod 默认 true；prod 解锁后 true；强制关闭后 false）。
     const [available, setAvailable] = useState<boolean>(() => isDevDebugAvailable());
     const [hint, setHint] = useState<string | null>(null);
-    // 版本更新检查：idle = 未检查 / 检查中；available = 有新版本；none = 已是最新；error = 检查失败。
-    const [update, setUpdate] = useState<'idle' | 'checking' | 'available' | 'none' | 'error'>('idle');
+    // 版本更新检查：idle = 未检查 / checking = 检查中；available = 有新版本；
+    // none = 已是最新；behind = 线上比本机还旧（部署没跑完）；error = 检查失败。
+    const [update, setUpdate] = useState<'idle' | 'checking' | 'available' | 'none' | 'behind' | 'error'>('idle');
     const [updateLabel, setUpdateLabel] = useState<string | null>(null);
+    const [updateTime, setUpdateTime] = useState<string | null>(null);
     const tapCountRef = useRef(0);
     const tapTimerRef = useRef<number | null>(null);
     const hintTimerRef = useRef<number | null>(null);
@@ -52,12 +54,19 @@ const VersionInfo: React.FC = () => {
         if (result.status === 'update-available') {
             setUpdate('available');
             setUpdateLabel(result.latest.label);
+            setUpdateTime(result.latest.time || null);
             trackEvent('检查到新版本', { 目标: result.latest.label });
+        } else if (result.status === 'live-behind') {
+            // 本机比线上新：多半是这次推送还没部署成功。不能说「最新」，也不能让人刷新降级。
+            setUpdate('behind');
+            setUpdateLabel(result.latest.label);
+            setUpdateTime(result.latest.time || null);
         } else if (result.status === 'up-to-date') {
             setUpdate('none');
             // 没新版时也把线上那一份的 label 记下来：万一线上其实落后（部署没跑），
             // 这里显示的就是线上真实版本，一眼能看出不是同一份构建。
             setUpdateLabel(result.latest.label);
+            setUpdateTime(result.latest.time || null);
         } else {
             setUpdate('error');
         }
@@ -157,11 +166,21 @@ const VersionInfo: React.FC = () => {
             {update === 'none' && (
                 <div className="text-[9px] font-mono text-emerald-500/80 tracking-normal normal-case">
                     ✓ 已是最新版本{updateLabel ? ` · 线上 ${updateLabel}` : ''}
+                    {updateTime ? ` · ${updateTime.slice(0, 16)}` : ''}
                 </div>
             )}
             {update === 'available' && (
                 <div className="text-[9px] font-mono text-amber-500/80 tracking-normal normal-case">
                     线上 {updateLabel} ≠ 当前 {BUILD_LABEL}
+                    {updateTime ? ` · ${updateTime.slice(0, 16)}` : ''}
+                </div>
+            )}
+            {update === 'behind' && (
+                <div className="text-[9px] font-mono text-sky-500/80 tracking-normal normal-case text-center leading-relaxed">
+                    线上还停在 {updateLabel}
+                    {updateTime ? ` · ${updateTime.slice(0, 16)}` : ''}
+                    <br />
+                    本机这份比线上新，不用刷新：这次改动还没部署上去
                 </div>
             )}
             {update === 'error' && (

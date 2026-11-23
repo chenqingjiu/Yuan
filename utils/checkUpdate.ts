@@ -15,6 +15,10 @@
  *      却说已是最新」。它的 handle 只放行 `cache: 'no-store'` 和带非 v 查询
  *      参数的请求，所以这里两个都用上。
  *   2. 浏览器 / CDN 的 HTTP 缓存：`no-store` + 时间戳参数足够。
+ *
+ * 还有第三种「看着像 bug、其实是线上没更新」的情况：本地构建比线上新
+ * （部署没跑、或还在构建）。这时候既不能报「已是最新」，也不能报「有新版本」
+ * 让人点刷新反而降级，要单独说清楚。
  */
 
 import { BUILD_LABEL } from './buildInfo';
@@ -30,9 +34,18 @@ export interface VersionPayload {
 export type UpdateCheckResult =
   | { status: 'up-to-date'; latest: VersionPayload }
   | { status: 'update-available'; latest: VersionPayload }
+  | { status: 'live-behind'; latest: VersionPayload }
   | { status: 'error'; message: string };
 
 const VERSION_URL = 'version.json';
+const CURRENT_BUILD_ID = typeof __APP_BUILD_ID__ === 'undefined' ? '' : __APP_BUILD_ID__;
+
+/** buildId 开头是构建时间（36 进制，见 vite.config.ts），可以据此判断谁新谁旧。 */
+function buildTimestamp(id: string | undefined): number {
+  if (!id) return 0;
+  const value = Number.parseInt(id.split('-')[0], 36);
+  return Number.isFinite(value) ? value : 0;
+}
 
 /** fetch 线上 version.json，容错为 null（拿不到就当作检查失败，不误报）。 */
 export async function fetchVersionPayload(): Promise<VersionPayload | null> {
@@ -54,6 +67,13 @@ export async function checkForUpdate(): Promise<UpdateCheckResult> {
     return { status: 'error', message: '无法获取线上版本信息，请检查网络' };
   }
   if (latest.label !== BUILD_LABEL) {
+    // 线上比本机还旧：不是「有新版本」，是这次推送还没部署成功、或构建还没跑完。
+    // 报成「有新版本」会让用户刷新完反而退回旧版。
+    const live = buildTimestamp(latest.buildId) || Date.parse(latest.time) || 0;
+    const mine = buildTimestamp(CURRENT_BUILD_ID);
+    if (live > 0 && mine > 0 && live < mine) {
+      return { status: 'live-behind', latest };
+    }
     return { status: 'update-available', latest };
   }
   return { status: 'up-to-date', latest };

@@ -26,9 +26,12 @@ concurrency:
 
 jobs:
   deploy:
-    # 同一次提交会被推到两个仓库（私有 ShinQ + 公开 ShinQ-qs）：只让公开仓库真正部署，
-    # 否则两个构建会同时往同一个站点上传、互相覆盖。另一个仓库里本 job 显示 skipped。
-    if: github.repository == '361293184/ShinQ-qs'
+    # 上游有两个仓库（私有 ShinQ + 公开 ShinQ-qs）会同时收到同一次提交，
+    # 只让公开那个往正式站点部署，免得两份构建互相覆盖；私有镜像跳过。
+    # 其余仓库（别人 fork 出去、用自己账号部署的）一律照跑——
+    # 之前这里写死了公开仓库名，导致 fork 出来的仓库每次推 main 都 skipped，
+    # 线上一直停在旧版本，界面还如实回答「已是最新」。
+    if: github.repository != '361293184/ShinQ'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
