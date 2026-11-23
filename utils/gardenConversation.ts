@@ -109,6 +109,108 @@ export function parseGardenActions(raw: string): { text: string; actions: Garden
     return { text, actions: actions.filter(item => item.plot >= 1).slice(0, 1) };
 }
 
+/* ── 巡检留言 ────────────────────────────────────────────────────────────
+   每 8 小时角色自己巡一次园，事情是花园里真做的（patrol.js），
+   这里只负责把那份报告写成一句人话，留给留言板、顺手同步到私聊。 */
+export interface PatrolStep {
+    kind: 'water' | 'harvest' | 'steal';
+    plot: number;
+    crop?: string;
+}
+
+export interface PatrolReport {
+    id: string;
+    charId?: string;
+    name: string;
+    summary: string;
+    steps: PatrolStep[];
+    other: { id: string; name: string; steps: PatrolStep[] } | null;
+}
+
+function describePatrolStep(step: PatrolStep): string {
+    if (step.kind === 'harvest') return `收了 ${step.plot} 号地的${step.crop || '菜'}`;
+    if (step.kind === 'steal') return `从别人家 ${step.plot} 号地摸走一颗`;
+    return `给 ${step.plot} 号地浇了水`;
+}
+
+export async function generatePatrolNote(args: {
+    char: CharacterProfile;
+    user: UserProfile;
+    api: APIConfig;
+    report: PatrolReport;
+}): Promise<string> {
+    const { char, user, api, report } = args;
+    if (!api.baseUrl || !api.model) return '';
+
+    const own = (report.steps || []).map(describePatrolStep);
+    const away = report.other
+        ? report.other.steps.map(step =>
+              step.kind === 'steal'
+                  ? `从${report.other!.name}家 ${step.plot} 号地摸走一颗`
+                  : `帮${report.other!.name}给 ${step.plot} 号地浇了水`
+          )
+        : [];
+    const deeds = [...own, ...away].join('；') || '什么也没做，只是看了看';
+
+    const prompt =
+        `你是${char.name}。刚刚在自己的小花园里转了一圈，顺手做了这些事：${deeds}。\n` +
+        `现在给${user.name?.trim() || '对方'}留一张便签，就像随手写在院子里木牌上的那种。` +
+        `一两句话就够，口语，带一点你自己的语气和习惯；不要解释你在巡检，不要写旁白或括号，不要写任何动作标记。`;
+
+    try {
+        const response = await fetch(`${api.baseUrl.replace(/\/+$/, '')}/chat/completions`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${api.apiKey || 'sk-none'}`,
+            },
+            signal: AbortSignal.timeout(15000),
+            body: JSON.stringify({
+                model: api.model,
+                messages: [
+                    { role: 'system', content: `你是${char.name}，说话自然、具体，不写解释性文字。` },
+                    { role: 'user', content: prompt },
+                ],
+                temperature: 0.95,
+                max_tokens: 200,
+                stream: false,
+            }),
+            __sullyMeta: {
+                appName: '小花园',
+                charId: char.id,
+                charName: char.name,
+                purpose: '花园巡检留言',
+            },
+        } as RequestInit);
+        if (!response.ok) return '';
+        const raw = extractContent(await safeResponseJson(response));
+        return String(raw || '')
+            .replace(/\[\[[^\]]*\]\]/g, '')
+            .replace(/\n{2,}/g, '\n')
+            .replace(/^["'「『]|["'」』]$/g, '')
+            .trim()
+            .slice(0, 240);
+    } catch {
+        /* 断网、超时、没配 key：留言退回花园自己写的那句，动作已经做完了 */
+        return '';
+    }
+}
+
+/** 巡检留言同步到私聊。和花园对话同一张表，靠 metadata.source 归堆。 */
+export async function saveGardenBoardMessage(
+    charId: string,
+    content: string,
+    meta?: Record<string, unknown>
+): Promise<number> {
+    return DB.saveMessage({
+        charId,
+        role: 'user',
+        type: 'text',
+        content,
+        metadata: { source: GARDEN_SOURCE, gardenBoard: true, ...meta },
+    });
+}
+
 export interface GardenReplyRequest {
     char: CharacterProfile;
     user: UserProfile;

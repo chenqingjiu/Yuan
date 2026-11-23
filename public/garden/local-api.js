@@ -10,6 +10,7 @@ import {
     visitorWater,
     pushTrail,
 } from "./garden.browser.js?v=visit1123-v1";
+import { startPatrol } from "./patrol.js?v=patrol1123-v1";
 
 /* 兜底：局域网 http 访问时 crypto.randomUUID 可能不存在（非安全上下文），
    而 app.js 拿它当幂等号，缺了会直接种不了地。 */
@@ -46,6 +47,17 @@ const RAW_OWNER = QUERY.get("owner") || "";
 const OWNER = /^[A-Za-z0-9_-]{1,64}$/.test(RAW_OWNER) ? RAW_OWNER : "main";
 const VISIT = QUERY.get("visit") === "1";
 const KEY = OWNER;
+/** 旧 "main" 存档只搬一次家，搬过就在本地记一笔，别让后来的角色再抢一遍 */
+const ADOPT_FLAG = "rainholm-garden:adopted";
+
+/* 做客时把「收」从地块卡上拿掉：收成只归主人，留在按钮上只会点一次弹一次错。 */
+if (VISIT) {
+    const visitStyle = document.createElement("style");
+    visitStyle.textContent = 'body.rh-visit [data-action="harvest"]{display:none!important}';
+    (document.head || document.documentElement).appendChild(visitStyle);
+    document.addEventListener("DOMContentLoaded", () => document.body.classList.add("rh-visit"), { once: true });
+    if (document.body) document.body.classList.add("rh-visit");
+}
 
 function openDB() {
     return new Promise((resolve, reject) => {
@@ -72,12 +84,26 @@ async function readRaw(key) {
     }
 }
 
-async function writeRaw(value) {
+async function writeRaw(value, key) {
     const db = await openDB();
     try {
         await new Promise((resolve, reject) => {
             const tx = db.transaction(STORE, "readwrite");
-            tx.objectStore(STORE).put(value, KEY);
+            tx.objectStore(STORE).put(value, key || KEY);
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+        });
+    } finally {
+        db.close();
+    }
+}
+
+async function dropRaw(key) {
+    const db = await openDB();
+    try {
+        await new Promise((resolve, reject) => {
+            const tx = db.transaction(STORE, "readwrite");
+            tx.objectStore(STORE).delete(key || KEY);
             tx.oncomplete = () => resolve();
             tx.onerror = () => reject(tx.error);
         });
@@ -110,6 +136,18 @@ const service = new SceneService({
     },
 });
 
+/* 给巡检模块的存档把手：同一套 IndexedDB，能顺手读写另一个角色那份。 */
+window.__rhGardenStore = {
+    key: () => KEY,
+    owner: () => OWNER,
+    isVisit: () => VISIT,
+    record: () => record,
+    readOther: (key) => readRaw(key),
+    writeOther: (key, value) => writeRaw(value, key),
+    save: () => scheduleSave(),
+    flush: () => flush(),
+};
+
 ready = (async () => {
     let raw = null;
     try {
@@ -117,15 +155,27 @@ ready = (async () => {
     } catch (e) {
         console.warn("[garden] 读存档失败，从头开始", e);
     }
-    /* 单花园时代只有 "main" 这一份：新角色第一次进来时把它接过来，别让攒的地白种 */
+    /* 单花园时代只有 "main" 这一份：新角色第一次进来时把它接过来，别让攒的地白种。
+       visit1123 的教训：这段没有次数限制，第二个角色进来又会把 main 抢一遍，
+       于是「谁最后进门，谁就带着上一个人的地」——sully 地里凭空长出东西就是这么来的。
+       现在只允许搬一次家，搬完在本地留个记号。 */
     if (!raw?.record?.farm && KEY !== "main") {
+        let adopted = "";
         try {
-            const legacy = await readRaw("main");
-            if (legacy?.record?.farm) {
-                raw = legacy;
-                console.info("[garden] 已把旧存档接管到 " + KEY);
-            }
+            adopted = localStorage.getItem(ADOPT_FLAG) || "";
         } catch (_) { }
+        if (!adopted) {
+            try {
+                const legacy = await readRaw("main");
+                if (legacy?.record?.farm) {
+                    raw = legacy;
+                    try {
+                        localStorage.setItem(ADOPT_FLAG, KEY);
+                    } catch (_) { }
+                    console.info("[garden] 已把旧存档接管到 " + KEY + "（仅此一次）");
+                }
+            } catch (_) { }
+        }
     }
     if (raw?.record?.farm) {
         record = raw.record;
@@ -134,6 +184,7 @@ ready = (async () => {
     }
     ensureScenes(record, Date.now());
     scheduleSave();
+    startPatrol();
 })();
 
 const json = (body, status = 200) =>
@@ -143,8 +194,8 @@ const json = (body, status = 200) =>
     });
 
 /* ── 串门 ────────────────────────────────────────────────────────────────
-   在别人家：能帮浇水（真 +1 tick）、能送一棵（不花他的钱）、能偷一颗留个痕迹，
-   但收不了他的菜，也偷不走实物 —— 本地只有你一个人，偷来偷去都是自己的东西。 */
+   在别人家：能帮浇水（真 +1 tick）、能送一棵（不花他的钱）。
+   收不了他的菜 —— 收成只在主人自己手里，这条不通融。 */
 function visitAction(body, key) {
     const now = Date.now();
     if (body.revision !== record.revision) {
@@ -176,17 +227,7 @@ function visitAction(body, key) {
         return { ok: true, state: gardenView(record, now), note: "给他种下一棵" };
     }
 
-    if (body.action === "harvest") {
-        const plot = farm.plots.find(p => p.id === plotId);
-        if (!plot || !plot.crop) return { ok: false, status: 400, error: plotId + " 号地没有作物", state: gardenView(record, now) };
-        if (!plot.crop.ripe) return { ok: false, status: 400, error: "还没熟，再等等", state: gardenView(record, now) };
-        pushTrail(farm, { t: now, kind: "stolen", by: "你", plotId });
-        record.revision++;
-        scheduleSave();
-        return { ok: false, status: 400, error: "你偷偷摸走一颗，他没发现——地里的还留着", state: gardenView(record, now) };
-    }
-
-    return { ok: false, status: 400, error: "在别人家只能浇水、送一棵、偷一颗", state: gardenView(record, now) };
+    return { ok: false, status: 400, error: "在别人家只能浇水、送一棵，收成得主人自己来", state: gardenView(record, now) };
 }
 
 const realFetch = window.fetch.bind(window);
@@ -284,6 +325,14 @@ function pickFile() {
 function mountMenu() {
     const menu = document.getElementById("menu");
     if (!menu) return;
+    const dot = document.createElement("style");
+    dot.textContent = [
+        "#menu button.rh-board-unread{color:#b45309;font-weight:800}",
+        ".gd-tray-item.rh-board-unread{position:relative}",
+        ".gd-tray-item.rh-board-unread::after{content:'';position:absolute;top:4px;right:8px;width:10px;height:10px;",
+        "border-radius:50%;background:#e2725b;border:2px solid #fff8e4}",
+    ].join("");
+    (document.head || document.documentElement).appendChild(dot);
     const mk = (text, fn) => {
         const b = document.createElement("button");
         b.textContent = text;
@@ -295,8 +344,57 @@ function mountMenu() {
         });
         return b;
     };
+    const board = mk("留言板", () => (window.__rhGardenBoardOpen || window.__rhGardenBoard?.open)?.());
+    board.dataset.rh = "board";
+    menu.appendChild(board);
     menu.appendChild(mk("导出存档", download));
     menu.appendChild(mk("导入存档", pickFile));
+    menu.appendChild(mk("重置这个院子", resetGarden));
+
+    /* 原 nav 被 ui-refresh 换成了右侧托盘（#gdTray），它按固定清单建按钮，
+       后加的项不会自己长出去 —— 这里给托盘补一颗影子，点它等于点原按钮。 */
+    let trayItem = null;
+    const attachTray = () => {
+        if (trayItem) return;
+        const tray = document.getElementById("gdTray");
+        if (!tray) return;
+        trayItem = document.createElement("button");
+        trayItem.type = "button";
+        trayItem.className = "gd-tray-item";
+        trayItem.dataset.gdTarget = '#menu button[data-rh="board"]';
+        trayItem.style.setProperty("--i", 5);
+        trayItem.setAttribute("aria-label", "留言板");
+        trayItem.innerHTML =
+            '<img src="assets/v2/note.webp" alt="" aria-hidden="true" draggable="false">' +
+            '<span class="gd-lab" aria-hidden="true">留言板</span>';
+        trayItem.addEventListener("click", () => board.click());
+        tray.appendChild(trayItem);
+    };
+    attachTray();
+    if (!trayItem) setTimeout(attachTray, 900);
+
+    /* 有新留言就在「留言板」上挂个点，别做成必须点开才知道 */
+    const syncDot = () => {
+        const unread = window.__rhGardenBoard?.unread?.() || 0;
+        board.textContent = unread ? "留言板 · " + unread : "留言板";
+        board.classList.toggle("rh-board-unread", unread > 0);
+        if (trayItem) {
+            trayItem.classList.toggle("rh-board-unread", unread > 0);
+            const lab = trayItem.querySelector(".gd-lab");
+            if (lab) lab.textContent = unread ? "留言板 " + unread : "留言板";
+        }
+    };
+    syncDot();
+    setInterval(syncDot, 1500);
+}
+
+/* 这个角色的院子整个清掉。旧存档接管过一次留下的「别人的地」也靠它收场。 */
+function resetGarden() {
+    const who = OWNER === "main" ? "这座花园" : "这个角色的院子";
+    if (!confirm("把" + who + "整块清空？地里的作物、金币和图鉴都会没。导过存档的话还能导回来。")) return;
+    dropRaw(KEY)
+        .then(() => location.reload())
+        .catch((e) => alert("清空失败：" + (e?.message || e)));
 }
 
 if (document.readyState === "loading") {

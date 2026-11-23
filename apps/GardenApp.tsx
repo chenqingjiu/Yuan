@@ -3,9 +3,12 @@ import { useOS } from '../context/OSContext';
 import type { CharacterProfile } from '../types';
 import {
     generateGardenReply,
+    generatePatrolNote,
     loadGardenHistory,
+    saveGardenBoardMessage,
     saveGardenMessage,
     type GardenSnapshot,
+    type PatrolReport,
 } from '../utils/gardenConversation';
 
 const PICK_KEY = 'garden:characterId';
@@ -73,8 +76,56 @@ export default function GardenApp({ onBack }: { onBack: () => void }) {
                     type: 'history',
                     messages,
                     character: char ? { id: char.id, name: char.name } : null,
+                    /* 巡检串门要认得「另一个角色是谁」，名字直接用给 AI 的称呼 */
+                    others: characters
+                        .filter(item => item.id !== (char?.id || owner))
+                        .map(item => ({ id: item.id, name: item.name })),
                     configured: !!(apiConfig?.baseUrl && apiConfig?.model),
                 });
+                return;
+            }
+
+            /* 巡检做完了：补一句角色语气的留言，回给花园，同时写进私聊 */
+            if (data.type === 'patrol') {
+                const report = data.report as PatrolReport | undefined;
+                if (!report || !char) return;
+                const frame = frameRef.current;
+                void (async () => {
+                    let note = '';
+                    try {
+                        note = await generatePatrolNote({ char, user: userProfile, api: apiConfig, report });
+                    } catch {
+                        /* 文案失败不影响已经做过的动作，花园那边会用兜底句 */
+                    }
+                    post(frame, { type: 'patrol-note', id: data.id, text: note });
+
+                    const line = note || report.summary;
+                    if (!line) return;
+                    await saveGardenBoardMessage(char.id, `「小花园 · 留言板」${line}`, {
+                        patrolId: report.id,
+                        patrolBy: char.id,
+                    }).catch(() => 0);
+
+                    if (report.other) {
+                        const otherName = report.other.name || '对方';
+                        const detail = report.other.steps
+                            .map(step =>
+                                step.kind === 'steal'
+                                    ? `顺手从 ${step.plot} 号地摸走一颗`
+                                    : step.kind === 'harvest'
+                                      ? `收了 ${step.plot} 号地`
+                                      : `给 ${step.plot} 号地浇了水`
+                            )
+                            .join('，');
+                        if (detail) {
+                            await saveGardenBoardMessage(
+                                report.other.id,
+                                `「小花园 · 留言板」${char.name}来你的院子转了转：${detail}。`,
+                                { patrolId: report.id, patrolBy: char.id, patrolHost: otherName }
+                            ).catch(() => 0);
+                        }
+                    }
+                })();
                 return;
             }
 
@@ -152,7 +203,7 @@ export default function GardenApp({ onBack }: { onBack: () => void }) {
 
         window.addEventListener('message', onMessage);
         return () => window.removeEventListener('message', onMessage);
-    }, [char, apiConfig, userProfile]);
+    }, [char, apiConfig, userProfile, characters, owner]);
 
     if (choosing || (!char && characters.length > 1)) {
         return (
@@ -288,7 +339,7 @@ export default function GardenApp({ onBack }: { onBack: () => void }) {
                     className="absolute left-1/2 -translate-x-1/2 z-20 rounded-full bg-white/85 backdrop-blur px-3 py-1 text-[11px] font-bold text-amber-800 shadow-sm border border-amber-200/70 whitespace-nowrap"
                     style={{ top: 'calc(var(--safe-top, 0px) + 8px)' }}
                 >
-                    在 {char?.name || '对方'} 家做客 · 只能浇水、送一棵、偷一颗
+                    在 {char?.name || '对方'} 家做客 · 只能浇水、送一棵
                 </div>
             )}
         </div>

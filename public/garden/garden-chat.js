@@ -92,6 +92,82 @@
     ].join('');
     root.appendChild(panel);
 
+    /* ── 留言板 ─────────────────────────────────────────────────────────
+       巡检和串门留下的字都收在这里：谁来过、浇了哪块、顺走了什么。
+       数据在 patrol.js 的 record.patrol.log 里，这边只管按天排出来。 */
+    var boardStyle = document.createElement('style');
+    boardStyle.textContent = [
+        '#board{position:fixed;left:0;right:0;bottom:0;margin:0 auto;width:100%;max-width:520px;max-height:min(72vh,600px);',
+        'display:flex;flex-direction:column;background:linear-gradient(#fffdf7,#fbf3e3);border-radius:20px 20px 0 0;',
+        'border:2px solid #d9c19a;border-bottom:0;box-shadow:0 -10px 30px rgba(110,75,35,.22);',
+        'transform:translateY(calc(100% + 30px));transition:transform .24s cubic-bezier(.22,.9,.3,1);pointer-events:auto;',
+        'padding-bottom:env(safe-area-inset-bottom,0px);font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif}',
+        '#board.open{transform:translateY(0)}',
+        '#board-head{display:flex;align-items:center;gap:8px;padding:12px 14px 10px;border-bottom:1px dashed #e2d3b8;flex:none}',
+        '#board-head h3{margin:0;font-size:14px;color:#6b4a2a;font-weight:800;flex:1}',
+        '#board-head small{font-size:11px;color:#a88b66}',
+        '#board-close{border:0;background:#f1e4cd;color:#8a6540;width:28px;height:28px;border-radius:50%;font-size:15px;cursor:pointer;padding:0}',
+        '#board-list{flex:1;overflow-y:auto;padding:10px 14px 16px;-webkit-overflow-scrolling:touch}',
+        '.note{padding:10px 0;border-bottom:1px dashed #ece0cb}',
+        '.note:last-child{border-bottom:0}',
+        '.note time{display:block;font-size:10.5px;color:#b09a7c;margin-bottom:3px}',
+        '.note p{margin:0;font-size:13.5px;line-height:1.6;color:#4e4237;white-space:pre-wrap;word-break:break-word}',
+        '.note b{color:#8a6540;font-weight:800}',
+        '.note-empty{padding:34px 6px;text-align:center;font-size:12.5px;color:#b09a7c;line-height:1.7}'
+    ].join('');
+    root.appendChild(boardStyle);
+
+    var board = document.createElement('div');
+    board.id = 'board';
+    board.innerHTML = '<div id="board-head"><h3>花园留言板</h3><small id="board-sub"></small>'
+        + '<button id="board-close" type="button" aria-label="收起留言板">✕</button></div>'
+        + '<div id="board-list"></div>';
+    root.appendChild(board);
+
+    var boardList = root.getElementById('board-list');
+
+    function stamp(ts) {
+        var d = new Date(Number(ts) || Date.now());
+        var now = new Date();
+        var hm = ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
+        if (d.toDateString() === now.toDateString()) return '今天 ' + hm;
+        var y = new Date(now.getTime() - 86400000);
+        if (d.toDateString() === y.toDateString()) return '昨天 ' + hm;
+        return (d.getMonth() + 1) + ' 月 ' + d.getDate() + ' 日 ' + hm;
+    }
+
+    function renderBoard() {
+        var api = window.__rhGardenBoard;
+        var list = (api && typeof api.entries === 'function' ? api.entries() : []) || [];
+        if (!list.length) {
+            boardList.innerHTML = '<div class="note-empty">还没有字。<br>等 ' + esc(charName || 'TA')
+                + ' 巡过一次园，这里就会有留言。</div>';
+            root.getElementById('board-sub').textContent = '';
+            return;
+        }
+        boardList.innerHTML = list.map(function (item) {
+            return '<div class="note"><time>' + esc(stamp(item.t)) + '</time><p>'
+                + (item.from ? '<b>' + esc(item.from) + '</b> ' : '') + esc(item.text || '') + '</p></div>';
+        }).join('');
+        root.getElementById('board-sub').textContent = list.length + ' 条';
+    }
+
+    function setBoard(open) {
+        if (open) {
+            renderBoard();
+            if (window.__rhGardenBoard?.markRead) window.__rhGardenBoard.markRead();
+            board.classList.add('open');
+        } else {
+            board.classList.remove('open');
+        }
+    }
+
+    window.__rhGardenBoardOpen = function () { setBoard(true); };
+    root.getElementById('board-close').addEventListener('click', function () { setBoard(false); });
+    window.addEventListener('rainholm:garden-patrol', function () {
+        if (board.classList.contains('open')) renderBoard();
+    });
+
     var list = root.getElementById('list');
     var input = root.getElementById('input');
     var sendBtn = root.getElementById('send');
@@ -283,6 +359,12 @@
 
         if (data.type === 'history') {
             charName = (data.character && data.character.name) || '';
+            /* 巡检模块靠这份信息知道「我是谁、还有谁家可以去」 */
+            window.__rhCharInfo = {
+                charId: (data.character && data.character.id) || '',
+                charName: charName,
+                others: Array.isArray(data.others) ? data.others : []
+            };
             title.textContent = charName ? '和 ' + charName + ' 说说话' : '说说话';
             switchBtn.hidden = !charName;
             hint.textContent = data.configured === false ? '还没配聊天 API' : '';
