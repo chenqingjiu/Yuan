@@ -141,10 +141,7 @@ async function patrolOther(record, name, now, steps) {
     const pool = (info.others || []).filter((item) => item && item.id);
     /* 不止一个邻居时随便挑一家，别每次都定点去同一个人那儿 */
     const target = pool.length ? pool[Math.floor(Math.random() * pool.length)] : null;
-    if (!target) {
-        console.info("[garden] 巡检：没有可串门的角色", info);
-        return null;
-    }
+    if (!target) return null;
     const s = store();
     if (!s) return null;
     let raw = null;
@@ -154,10 +151,7 @@ async function patrolOther(record, name, now, steps) {
         console.warn("[garden] 巡检：读不到对方存档", target.id, error);
         return null;
     }
-    if (!raw?.record?.farm) {
-        console.info("[garden] 巡检：对方还没有自己的院子", target.id, raw && Object.keys(raw));
-        return null;
-    }
+    if (!raw?.record?.farm) return null;
 
     const farm = raw.record.farm;
     advance(farm, now);
