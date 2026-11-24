@@ -139,7 +139,7 @@
      回滚：删掉这一段 + web/host-cat.js + web/assets/cats-fourway-v1/。 */
   try {
     var cat = document.createElement("script");
-    cat.src = "host-cat.js?v=nogo0919-v3-walkturn0918-v4-walktune0917-userwhite0918-chatspeak1123-goto1123-avatar1124-v1";   /* 改了这支就动缓存串（fourway20260912 起的规矩）。串里几段都留着：walktune 班 9/17 改了步速/换帧，nogo 班 9/19 重画了禁区（地面补全＋畦判脚点＋UI 读真 DOM），userwhite 班 9/18 停了白猫的自主遛弯 —— 都是同一支文件，谁也别把谁的标记盖掉 */
+    cat.src = "host-cat.js?v=nogo0919-v3-walkturn0918-v4-walktune0917-userwhite0918-chatspeak1123-goto1123";   /* 改了这支就动缓存串（fourway20260912 起的规矩）。串里几段都留着：walktune 班 9/17 改了步速/换帧，nogo 班 9/19 重画了禁区（地面补全＋畦判脚点＋UI 读真 DOM），userwhite 班 9/18 停了白猫的自主遛弯 —— 都是同一支文件，谁也别把谁的标记盖掉 */
     document.head.appendChild(cat);
   } catch (_) { }
 })();
