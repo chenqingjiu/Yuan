@@ -8,8 +8,6 @@ const allowedScenes=['garden','greenhouse','cathome'];
 const dataScenes=['garden','greenhouse'];
 const sceneName={garden:'花园',greenhouse:'花房',cathome:'小窝'};
 const query=new URLSearchParams(location.search);
-/* 串门视角：收成归主人，收获弹窗的措辞要跟着换，不然像自己白忙一场。 */
-const visitMode=()=>{try{return window.__rhGardenStore?.isVisit?.()===true}catch(_){return false}};
 let scene=allowedScenes.includes(host.initialScene)?host.initialScene:allowedScenes.includes(query.get('scene'))?query.get('scene'):'garden';
 let night=host.isNight===true, state=null, confirmed=null, selected=null,page=0,scale=1,online=false,requestVersion=0,controller,clockOffset=0,toastTimer;
 
@@ -497,8 +495,7 @@ async function sendAction(action,extra={}){
  render();
  let refetch=false;
  try{
-   const actor=(window.__rhGardenActorUntil||0)>Date.now()?'owner':'';   /* 串门时 sully 以主人身份做动作，短时效，不影响玩家手点的帮忙 */
- const r=await fetch('api/action',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-Garden-Action':'1','Idempotency-Key':op.key,...(actor?{'X-Garden-Actor':actor}:{})},body:JSON.stringify(op.body),signal:AbortSignal.timeout(12000)});const b=await r.json();
+ const r=await fetch('api/action',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-Garden-Action':'1','Idempotency-Key':op.key},body:JSON.stringify(op.body),signal:AbortSignal.timeout(12000)});const b=await r.json();
   if(r.status>=500)throw Error(b.error||'暂时连接不上');
   const coinsBefore=state?.coins;
   inflight.delete(op.key);pendings.delete(op.key);
@@ -517,8 +514,7 @@ async function sendAction(action,extra={}){
     if(action==='harvest'&&fresh&&Number.isFinite(coinsBefore)&&state.coins!==coinsBefore)coinRoll=[coinsBefore,state.coins];
     if(b.reveal){const c=b.reveal;
      if(c.rarity==='SSR'||c.rarity==='SP'){sfx.ssr();buzz([30,40,60])}
-     const helping=visitMode()&&!c.byOwner;
-     dialog(helping?(c.isNew?'替 TA 收了个新发现……':'替 TA 收了……'):(c.isNew?'图鉴里的新朋友':'这一回，收到了……'),`<div class="reveal">${revealedArt(c)||`<div class="plant-emblem">${icon('sparkles')}</div>`}<h3>${safe(c.name)}</h3><p>${safe(c.rarity)} · ${safe(c.quality)}</p><p>收成 ${safe(c.value)} 金${c.codexReward?' · 新图鉴奖励 '+safe(c.codexReward)+' 金':''}</p><p>${helping?'都记在 TA 名下：金币进 TA 的钱包，发现留在 TA 的图鉴。':'金币已结算，发现已留在图鉴里。'}</p></div>`)}
+     dialog(c.isNew?'图鉴里的新朋友':'这一回，收到了……',`<div class="reveal">${revealedArt(c)||`<div class="plant-emblem">${icon('sparkles')}</div>`}<h3>${safe(c.name)}</h3><p>${safe(c.rarity)} · ${safe(c.quality)}</p><p>收成 ${safe(c.value)} 金${c.codexReward?' · 新图鉴奖励 '+safe(c.codexReward)+' 金':''}</p><p>金币已结算，发现已留在图鉴里。</p></div>`)}
     else if(op.snap&&!matchesOptimistic(op))notify('和花园对了一下，已按实际情况摆好');
     else notify(b.capped?'好运已经攒满':'照料好啦');
     /* 返修 R3：已确认状态随事件一起发，地块组件直接消费，不再多拉一次 GET */

@@ -57,8 +57,7 @@
         '#head{display:flex;align-items:center;gap:8px;padding:11px 14px 9px;border-bottom:1px dashed #e2d3b8;flex:none}',
         '#head h3{margin:0;font-size:14px;color:#6b4a2a;font-weight:800;flex:1}',
         '#head small{font-size:11px;color:#a88b66;font-weight:500}',
-        '#close,#switch{border:0;background:#f1e4cd;color:#8a6540;width:28px;height:28px;border-radius:50%;font-size:15px;cursor:pointer;padding:0}',
-        '#switch[hidden]{display:none}',
+        '#close{border:0;background:#f1e4cd;color:#8a6540;width:28px;height:28px;border-radius:50%;font-size:15px;cursor:pointer;padding:0}',
         '#list{flex:1;overflow-y:auto;padding:12px 14px 6px;display:flex;flex-direction:column;gap:9px;-webkit-overflow-scrolling:touch}',
         '.row{display:flex;flex-direction:column;max-width:86%}',
         '.row.me{align-self:flex-end;align-items:flex-end}',
@@ -84,7 +83,6 @@
     panel.id = 'panel';
     panel.innerHTML = [
         '<div id="head"><h3 id="title">说说话</h3><small id="hint"></small>',
-        '<button id="switch" type="button" aria-label="换一个人" title="换一个人" hidden>⇄</button>',
         '<button id="close" type="button" aria-label="收起">✕</button></div>',
         '<div id="list" role="log" aria-live="polite"></div>',
         '<div id="foot"><textarea id="input" rows="1" maxlength="500" placeholder="说点什么…" aria-label="在花园说句话"></textarea>',
@@ -93,7 +91,7 @@
     root.appendChild(panel);
 
     /* ── 留言板 ─────────────────────────────────────────────────────────
-       巡检和串门留下的字都收在这里：谁来过、浇了哪块、顺走了什么。
+       巡检留下的字都收在这里：浇了哪块、收了什么。
        数据在 patrol.js 的 record.patrol.log 里，这边只管按天排出来。 */
     var boardStyle = document.createElement('style');
     boardStyle.textContent = [
@@ -292,11 +290,6 @@
 
     sendBtn.addEventListener('click', submit);
     root.getElementById('close').addEventListener('click', function () { setOpen(false); });
-    var switchBtn = root.getElementById('switch');
-    switchBtn.addEventListener('click', function () {
-        setOpen(false);
-        send({ type: 'switch' });
-    });
     input.addEventListener('keydown', function (e) {
         if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
             e.preventDefault();
@@ -336,9 +329,7 @@
             return {
                 scene: scene,
                 coins: Number.isFinite(coins) ? coins : undefined,
-                plots: plots,
-                /* visit1123：在别人家做客，能力边界和在自己家不一样 */
-                visit: new URLSearchParams(location.search).get('visit') === '1'
+                plots: plots
             };
         } catch (_) {
             return undefined;
@@ -375,9 +366,6 @@
     function doAct(act) {
         var g = window.RainholmGarden;
         var plot = Number(act.plot);
-        /* 串门时也在自己家：AI 的动作按主人身份走，别套「访客送一棵/帮收」那套。
-           玩家手点地块按钮不经这里，仍是帮忙规则。用 once 标记避免影响后续点击。 */
-        if (new URLSearchParams(location.search).get('visit') === '1') window.__rhGardenActorUntil = Date.now() + 1200;
         try {
             if (act.action === 'plant') g.plant(plot, act.seed === 'fantasy' ? 'fantasy' : 'common');
             else if (act.action === 'water') g.water(plot);
@@ -408,14 +396,12 @@
 
         if (data.type === 'history') {
             charName = (data.character && data.character.name) || '';
-            /* 巡检模块靠这份信息知道「我是谁、还有谁家可以去」 */
+            /* 巡检模块靠这份信息知道「我是谁」 */
             window.__rhCharInfo = {
                 charId: (data.character && data.character.id) || '',
-                charName: charName,
-                others: Array.isArray(data.others) ? data.others : []
+                charName: charName
             };
             title.textContent = charName ? '和 ' + charName + ' 说说话' : '说说话';
-            switchBtn.hidden = !charName;
             hint.textContent = data.configured === false ? '还没配聊天 API' : '';
             messages = (data.messages || []).map(function (m) {
                 return { role: m.role === 'character' ? 'character' : 'user', text: m.text, at: m.at };

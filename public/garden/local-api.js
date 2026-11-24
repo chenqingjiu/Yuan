@@ -1,18 +1,12 @@
 /* 本地存档层：把服务端的 api/state 与 api/action 换成本地实现。
-   引擎用的是同一份 SceneService，规则不会漂。存档落在 IndexedDB。 */
+   引擎用的是同一份 SceneService，规则不会漂。存档落在 IndexedDB。
+   花园固定给「王愿」一个人：没有串门、没有访客规则，所有动作都走主人规则。 */
 import {
     SceneService,
     ensureScenes,
     newRecord,
-    gardenView,
-    advance,
-    plant,
-    harvest,
-    visitorWater,
-    pushTrail,
-} from "./garden.browser.js?v=visit1123-v2";
-import { startPatrol } from "./patrol.js?v=patrol1123-v1";
-import { startAutoTend } from "./auto-tend.js?v=autotend1123-v1";
+} from "./garden.browser.js?v=single1124-v1";
+import { startPatrol } from "./patrol.js?v=single1124-v1";
 
 /* 兜底：局域网 http 访问时 crypto.randomUUID 可能不存在（非安全上下文），
    而 app.js 拿它当幂等号，缺了会直接种不了地。 */
@@ -41,26 +35,14 @@ const DB_VER = 2;
 const STORE = "save";
 const SAVE_VER = 2;
 
-/* visit1123：一个角色一块地。
-   ?owner=<角色id> 决定开谁的院子；?visit=1 表示这是去别人家做客。
-   没有参数时退回老键 "main"，老存档照常能读。 */
+/* 一棵花园：只认 URL 里的 owner（宿主固定传「王愿」的 id）。
+   没有参数时退回老键 "main"。 */
 const QUERY = new URLSearchParams(location.search);
 const RAW_OWNER = QUERY.get("owner") || "";
 const OWNER = /^[A-Za-z0-9_-]{1,64}$/.test(RAW_OWNER) ? RAW_OWNER : "main";
-const VISIT = QUERY.get("visit") === "1";
 const KEY = OWNER;
-/** 旧 "main" 存档只搬一次家，搬过就在本地记一笔，别让后来的角色再抢一遍 */
-const ADOPT_FLAG = "rainholm-garden:adopted";
-
-/* 做客时也能帮忙收熟了的（收成归主人，见 visitAction）。
-   以前这里把「收」按钮整块藏了，现在保留 —— 只把文案换成「帮 TA 收」更好认。 */
-if (VISIT) {
-    const visitStyle = document.createElement("style");
-    visitStyle.textContent = 'body.rh-visit [data-action="harvest"]::after{content:"（帮她收）";font-size:.72em;opacity:.75}';
-    (document.head || document.documentElement).appendChild(visitStyle);
-    document.addEventListener("DOMContentLoaded", () => document.body.classList.add("rh-visit"), { once: true });
-    if (document.body) document.body.classList.add("rh-visit");
-}
+/** 只清一次：之后就算别处又冒出旧 key 也不会反复删（它们本来也进不来） */
+const PURGE_FLAG = "rainholm-garden:purged-single:" + KEY;
 
 function openDB() {
     return new Promise((resolve, reject) => {
@@ -115,6 +97,40 @@ async function dropRaw(key) {
     }
 }
 
+/* 彻底清掉其它角色的花园存档（sully 那块地），只留当前 key。
+   用户选的是「彻底清空」：作物、金币、图鉴一起没，git 备份里还有旧版本。 */
+async function purgeOtherGardens() {
+    let done = "";
+    try {
+        done = localStorage.getItem(PURGE_FLAG) || "";
+    } catch (_) { }
+    if (done === "1") return;
+    const db = await openDB();
+    try {
+        const keys = await new Promise((resolve, reject) => {
+            const q = db.transaction(STORE, "readonly").objectStore(STORE).getAllKeys();
+            q.onsuccess = () => resolve(q.result || []);
+            q.onerror = () => reject(q.error);
+        });
+        const doomed = keys.filter((k) => String(k) !== KEY);
+        if (doomed.length) {
+            await new Promise((resolve, reject) => {
+                const tx = db.transaction(STORE, "readwrite");
+                const os = tx.objectStore(STORE);
+                doomed.forEach((k) => os.delete(k));
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => reject(tx.error);
+            });
+            console.info("[garden] 已清空其它角色的花园存档：" + doomed.map(String).join("、"));
+        }
+        try {
+            localStorage.setItem(PURGE_FLAG, "1");
+        } catch (_) { }
+    } finally {
+        db.close();
+    }
+}
+
 let record = null;
 let saveTimer = 0;
 let ready = null;
@@ -139,46 +155,23 @@ const service = new SceneService({
     },
 });
 
-/* 给巡检模块的存档把手：同一套 IndexedDB，能顺手读写另一个角色那份。 */
+/* 巡检模块的存档把手：同一套 IndexedDB。 */
 window.__rhGardenStore = {
     key: () => KEY,
     owner: () => OWNER,
-    isVisit: () => VISIT,
+    isVisit: () => false,
     record: () => record,
-    readOther: (key) => readRaw(key),
-    writeOther: (key, value) => writeRaw(value, key),
     save: () => scheduleSave(),
     flush: () => flush(),
 };
 
 ready = (async () => {
+    await purgeOtherGardens();
     let raw = null;
     try {
         raw = await readRaw();
     } catch (e) {
         console.warn("[garden] 读存档失败，从头开始", e);
-    }
-    /* 单花园时代只有 "main" 这一份：新角色第一次进来时把它接过来，别让攒的地白种。
-       visit1123 的教训：这段没有次数限制，第二个角色进来又会把 main 抢一遍，
-       于是「谁最后进门，谁就带着上一个人的地」——sully 地里凭空长出东西就是这么来的。
-       现在只允许搬一次家，搬完在本地留个记号。 */
-    if (!raw?.record?.farm && KEY !== "main") {
-        let adopted = "";
-        try {
-            adopted = localStorage.getItem(ADOPT_FLAG) || "";
-        } catch (_) { }
-        if (!adopted) {
-            try {
-                const legacy = await readRaw("main");
-                if (legacy?.record?.farm) {
-                    raw = legacy;
-                    try {
-                        localStorage.setItem(ADOPT_FLAG, KEY);
-                    } catch (_) { }
-                    console.info("[garden] 已把旧存档接管到 " + KEY + "（仅此一次）");
-                }
-            } catch (_) { }
-        }
     }
     if (raw?.record?.farm) {
         record = raw.record;
@@ -187,12 +180,7 @@ ready = (async () => {
     }
     ensureScenes(record, Date.now());
     scheduleSave();
-    /* 主人自己的院子（王愿那种）：照旧走巡检 + 私人互动。
-       串门进别人的院子（sully 那种）：改走程序代管 —— 按固定规则替主人把地
-       种/浇/收好，写进她的存档和留言板；玩家的「帮忙」按钮仍然是 visitAction，
-       两条路互不干扰。 */
-    if (VISIT) startAutoTend();
-    else startPatrol();
+    startPatrol();
 })();
 
 const json = (body, status = 200) =>
@@ -200,69 +188,6 @@ const json = (body, status = 200) =>
         status,
         headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" },
     });
-
-/* ── 串门 ────────────────────────────────────────────────────────────────
-   在别人家：能帮浇水（真 +1 tick）、能送一棵（不花他的钱）、能帮他收熟的。
-   收成全部归主人 —— 金币、图鉴、收获记录都写进她的存档，访客自己什么都不拿。
-   这样她的花不会因为没人来而烂在地里，也不存在「左手倒右手」。 */
-function visitAction(body, key) {
-    const now = Date.now();
-    if (body.revision !== record.revision) {
-        return { ok: false, status: 409, error: "这边刚有变化，已经帮你刷新", state: gardenView(record, now) };
-    }
-    if (advance(record.farm, now) > 0) record.revision++;
-    record.farm.coins = record.wallet;
-    const farm = record.farm;
-    const plotId = Number(body.plotId);
-
-    if (body.action === "water") {
-        const r = visitorWater(farm, "local-visitor", plotId, "你", now);
-        if (!r.ok) return { ok: false, status: 400, error: r.error, state: gardenView(record, now) };
-        record.revision++;
-        scheduleSave();
-        return { ok: true, state: gardenView(record, now), note: r.ripened ? "正好催熟了" : "替他浇了水" };
-    }
-
-    if (body.action === "plant") {
-        const seedType = body.seedType === "fantasy" ? "fantasy" : "common";
-        const before = farm.coins;
-        const r = plant(farm, plotId, seedType, undefined, now);
-        if (!r.ok) return { ok: false, status: 400, error: r.error, state: gardenView(record, now) };
-        farm.coins = before;                       /* 送的不收他的种子钱 */
-        record.wallet = farm.coins;
-        pushTrail(farm, { t: now, kind: "gift", by: "你", plotId });
-        record.revision++;
-        scheduleSave();
-        return { ok: true, state: gardenView(record, now), note: "给他种下一棵" };
-    }
-
-    if (body.action === "harvest") {
-        const coinsBefore = farm.coins;
-        const r = harvest(farm, plotId, now);
-        if (!r.ok) return { ok: false, status: 400, error: r.error, state: gardenView(record, now) };
-        record.wallet = farm.coins;                /* 进的是主人的钱包 */
-        const reveal = {
-            id: r.crop.id,
-            name: r.crop.name,
-            rarity: r.crop.rarity,
-            quality: r.quality.name,
-            value: farm.coins - coinsBefore - (r.codexReward ?? 0),
-            codexReward: r.codexReward,
-            isNew: r.isNew,
-            at: now,
-            bonus: r.bonus ? { name: r.bonus.name, text: r.bonus.text } : null,
-        };
-        record.history = Array.isArray(record.history) ? record.history : [];
-        record.history.unshift(reveal);
-        record.history = record.history.slice(0, 100);
-        pushTrail(farm, { t: now, kind: "helped", by: "你", plotId });
-        record.revision++;
-        scheduleSave();
-        return { ok: true, state: gardenView(record, now), reveal, note: "替 TA 收了 " + r.crop.name };
-    }
-
-    return { ok: false, status: 400, error: "在别人家只能浇水、送一棵、帮忙收熟的", state: gardenView(record, now) };
-}
 
 const realFetch = window.fetch.bind(window);
 
@@ -282,8 +207,7 @@ window.fetch = async function (input, init) {
     if (path.endsWith("/api/cat/black")) {
         return json({ ok: false, error: "本地版没有 AI 接口" }, 404);
     }
-    /* 玩家在花园里说的话：转给对话面板 → 宿主那侧生成回复。
-       面板自己也会冒泡，这里只负责不报 404。 */
+    /* 玩家在花园里说的话：转给对话面板 → 宿主那侧生成回复。 */
     if (path.endsWith("/api/messages") && (init?.method || "GET").toUpperCase() === "POST") {
         let text = "";
         try {
@@ -314,17 +238,8 @@ window.fetch = async function (input, init) {
     const headers = new Headers(init?.headers || {});
     const key = headers.get("Idempotency-Key") || "";
     const scene = body.scene || "garden";
-    /* 串门时默认的「帮忙」走 visitAction（不花钱、收成归主人）。
-       但 sully 对话里的动作标记是「她以主人身份自己动手」——请求头带 owner，
-       这时按主人规则走：花自己的钱种、正常浇水、收成进自己篮子，弹窗也不写替TA收。 */
-    const asOwner = headers.get("X-Garden-Actor") === "owner";
-    if (VISIT && scene === "garden" && !asOwner) {
-        const result = await visitAction(body, key);
-        return json(result, result.status ?? 200);
-    }
+    /* 只有一个主人：种、浇、收全走主人规则，收成进王愿自己的钱包。 */
     const result = await service.action("local", scene, body, key);
-    /* sully 以主人身份收获时，弹窗别写「替TA收了」*/
-    if (asOwner && result?.reveal) result.reveal.byOwner = true;
     return json(result, result.status ?? 200);
 };
 
@@ -388,9 +303,6 @@ function mountMenu() {
     board.dataset.rh = "board";
     menu.appendChild(board);
 
-    /* 原 nav 整个被 ui-refresh 换成了托盘，往里加的按钮用户看不见 ——
-       存档相关挪到留言板底部的细链接里，这里只留一个给托盘点的小影子。 */
-
     /* 原 nav 被 ui-refresh 换成了右侧托盘（#gdTray），它按固定清单建按钮，
        后加的项不会自己长出去 —— 这里给托盘补一颗影子，点它等于点原按钮。 */
     let trayItem = null;
@@ -414,7 +326,7 @@ function mountMenu() {
     attachTray();
     if (!trayItem) setTimeout(attachTray, 900);
 
-    /* 有新留言就在「留言板」上挂个点，别做成必须点开才知道 */
+    /* 有新留言就在「留言板」上挂个点 */
     const syncDot = () => {
         const unread = window.__rhGardenBoard?.unread?.() || 0;
         board.textContent = unread ? "留言板 · " + unread : "留言板";
@@ -429,10 +341,9 @@ function mountMenu() {
     setInterval(syncDot, 1500);
 }
 
-/* 这个角色的院子整个清掉。旧存档接管过一次留下的「别人的地」也靠它收场。 */
+/* 这个角色的院子整个清掉。 */
 function resetGarden() {
-    const who = OWNER === "main" ? "这座花园" : "这个角色的院子";
-    if (!confirm("把" + who + "整块清空？地里的作物、金币和图鉴都会没。导过存档的话还能导回来。")) return;
+    if (!confirm("把王愿的花园整块清空？地里的作物、金币和图鉴都会没。导过存档的话还能导回来。")) return;
     dropRaw(KEY)
         .then(() => location.reload())
         .catch((e) => alert("清空失败：" + (e?.message || e)));

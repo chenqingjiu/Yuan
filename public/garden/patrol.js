@@ -1,8 +1,8 @@
 /*
- * 花园巡检。
+ * 花园巡检（只照看王愿自己的院子）。
  *
- * 每 8 小时，选中的角色自己把院子转一圈：该浇的浇，熟了的收；
- * 顺路去另一个角色的院子看看，帮他浇一块地，偶尔顺走一颗（只留个说法，不动他的收成）。
+ * 每 8 小时把院子转一圈：该浇的浇，熟了的收。
+ * 没有串门 —— 不去别人家、不帮忙浇水、也不偷菜。
  *
  * 时间不靠后台计时器：浏览器关着就不会有人浇水。下次打开花园时按 8 小时一格补算一轮，
  * 和种子生长用的是同一套惰性结算，错过的时间不会白丢，也不会连刷好几遍。
@@ -15,16 +15,13 @@ import {
     gardenView,
     harvest,
     water,
-    visitorWater,
-    pushTrail,
-} from "./garden.browser.js?v=visit1123-v2";
+} from "./garden.browser.js?v=single1124-v1";
 
 const PATROL_MS = 8 * 60 * 60 * 1000;
-const STEAL_GAP = 20 * 60 * 60 * 1000;
 const NOTE_TIMEOUT = 9000;
 const LOG_MAX = 40;
 
-let info = { charId: "", charName: "", others: [] };
+let info = { charId: "", charName: "" };
 let running = false;
 let started = false;
 
@@ -36,7 +33,7 @@ function patrolState(record) {
     const p = record.patrol;
     /* 没这个字段（新存档 / 老存档第一次进新版）：从现在开始算，别一开门就先把园子巡了 */
     if (!Number.isFinite(p.lastAt)) p.lastAt = Date.now();
-    if (!Number.isFinite(p.lastStealAt)) p.lastStealAt = 0;
+    delete p.lastStealAt;
     if (!Array.isArray(p.log)) p.log = [];
     return p;
 }
@@ -47,13 +44,12 @@ function readInfo() {
         info = {
             charId: String(seed.charId || "") || info.charId,
             charName: String(seed.charName || "") || info.charName,
-            others: Array.isArray(seed.others) ? seed.others : info.others,
         };
     }
     return info;
 }
 
-/** 报告里的动作说成人话，喂给 AI 和兜底文案共用。 */
+/** 把动作说成人话，喂给 AI 和兜底文案共用。 */
 function describeOwn(steps) {
     const waterIds = steps.filter((s) => s.kind === "water").map((s) => s.plot);
     const harvests = steps.filter((s) => s.kind === "harvest");
@@ -63,32 +59,9 @@ function describeOwn(steps) {
     return parts.join("，");
 }
 
-function describeOther(other) {
-    if (!other || !other.steps.length) return "";
-    const waterIds = other.steps.filter((s) => s.kind === "water").map((s) => s.plot);
-    const steals = other.steps.filter((s) => s.kind === "steal").map((s) => s.plot);
-    const parts = [];
-    if (waterIds.length) parts.push("帮 " + other.name + " 浇了 " + waterIds.join("、") + " 号地");
-    if (steals.length) parts.push("从 " + other.name + " 家 " + steals.join("、") + " 号地摸走一颗");
-    return parts.join("，");
-}
-
-/** 写在主人自己留言板上的说法：「你」的地，不用再重复一遍名字。 */
-function describeVisit(other) {
-    if (!other || !other.steps.length) return "";
-    const waterIds = other.steps.filter((s) => s.kind === "water").map((s) => s.plot);
-    const steals = other.steps.filter((s) => s.kind === "steal").map((s) => s.plot);
-    const parts = [];
-    if (waterIds.length) parts.push("给 " + waterIds.join("、") + " 号地浇了水");
-    if (steals.length) parts.push("顺手从 " + steals.join("、") + " 号地摸走一颗");
-    return parts.join("，");
-}
-
-function buildSummary(steps, other) {
+function buildSummary(steps) {
     const own = describeOwn(steps);
-    const away = describeOther(other);
-    if (!own && !away) return "今天园子里没什么要忙的，转了一圈就回来了。";
-    return [own ? "自己的地：" + own : "", away ? "顺路：" + away : ""].filter(Boolean).join("；") + "。";
+    return own ? own + "。" : "今天园子里没什么要忙的，转了一圈就回来了。";
 }
 
 /** 让宿主补一句角色语气的留言；没有宿主就直接用兜底文案。 */
@@ -136,73 +109,6 @@ function patrolOwn(record, name, now, steps) {
     return steps;
 }
 
-/** 对方的院子：帮着浇一块，偶尔摸走一颗（痕迹留下，作物不动）。 */
-async function patrolOther(record, name, now, steps) {
-    const pool = (info.others || []).filter((item) => item && item.id);
-    /* 不止一个邻居时随便挑一家，别每次都定点去同一个人那儿 */
-    const target = pool.length ? pool[Math.floor(Math.random() * pool.length)] : null;
-    if (!target) return null;
-    const s = store();
-    if (!s) return null;
-    let raw = null;
-    try {
-        raw = await s.readOther(target.id);
-    } catch (error) {
-        console.warn("[garden] 巡检：读不到对方存档", target.id, error);
-        return null;
-    }
-    if (!raw?.record?.farm) return null;
-
-    const farm = raw.record.farm;
-    advance(farm, now);
-    const other = { id: target.id, name: target.name || "对方", steps: [] };
-
-    const otherView = gardenView(raw.record, now);
-    const cap = otherView.rules?.waterCap ?? 6;
-    const thirst = farm.plots.filter((plot) => {
-        if (!plot.crop || plot.crop.ripe) return false;
-        return (plot.crop.waterCount ?? 0) < Math.min(cap, plot.crop.progress ?? 0);
-    });
-    if (thirst.length) {
-        const pick = thirst[0];
-        const result = visitorWater(farm, info.charId || "local", pick.id, name, now);
-        if (result.ok) other.steps.push({ kind: "water", plot: pick.id, ripened: !!result.ripened });
-    }
-
-    const patrol = patrolState(record);
-    const ripePlots = farm.plots.filter((plot) => plot.crop?.ripe);
-    if (patrol && ripePlots.length && now - (patrol.lastStealAt || 0) > STEAL_GAP && Math.random() < 0.65) {
-        const pick = ripePlots[Math.floor(Math.random() * ripePlots.length)];
-        pushTrail(farm, { t: now, kind: "stolen", by: name, plotId: pick.id });
-        other.steps.push({ kind: "steal", plot: pick.id, crop: pick.crop?.seedType || "" });
-        patrol.lastStealAt = now;
-    }
-
-    if (!other.steps.length) return other;
-
-    raw.record.wallet = farm.coins;
-    raw.record.revision = (raw.record.revision || 0) + 1;
-    const otherPatrol = patrolState(raw.record);
-    if (otherPatrol) {
-        otherPatrol.log.unshift({
-            t: now,
-            from: name,
-            text: name + "来你的院子转了转：" + describeVisit(other) + "。",
-            steps: [],
-            visitSteps: other.steps,
-            read: false,
-            ai: false,
-        });
-        if (otherPatrol.log.length > LOG_MAX) otherPatrol.log.length = LOG_MAX;
-    }
-    try {
-        await s.writeOther(target.id, raw);
-    } catch (e) {
-        console.warn("[garden] 巡检：对方存档没写进去", e);
-    }
-    return other;
-}
-
 export async function runPatrol() {
     const s = store();
     if (!s || s.isVisit()) return null;
@@ -218,22 +124,16 @@ export async function runPatrol() {
     const steps = [];
 
     patrolOwn(record, name, now, steps);
-    const other = await patrolOther(record, name, now, steps).catch((error) => {
-        console.warn("[garden] 串门巡检出错", error);
-        return null;
-    });
 
     patrol.lastAt = now;
     record.revision = (record.revision || 0) + 1;
 
-    const summary = buildSummary(steps, other);
+    const summary = buildSummary(steps);
     const entry = {
         t: now,
         from: name,
         text: summary,
         steps,
-        visitName: other?.steps.length ? other.name : "",
-        visitSteps: other?.steps || [],
         read: false,
         ai: false,
     };
@@ -249,7 +149,7 @@ export async function runPatrol() {
         name,
         summary,
         steps,
-        other: other?.steps.length ? { id: other.id, name: other.name, steps: other.steps } : null,
+        other: null,
     };
     const note = await askHost(report);
     if (note) {

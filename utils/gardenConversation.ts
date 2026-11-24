@@ -28,10 +28,6 @@ export interface GardenSnapshot {
     scene?: 'garden' | 'greenhouse';
     coins?: number;
     plots?: GardenPlot[];
-    /** 在别人家做客（串门）；能力只剩浇水、送一棵、偷一颗 */
-    visit?: boolean;
-    /** 主人名字，宿主侧补上 */
-    visitHost?: string;
 }
 
 const STATE_LABEL: Record<string, string> = {
@@ -57,15 +53,10 @@ export function buildGardenScenePrompt(user: UserProfile, snapshot?: GardenSnaps
     const where = snapshot?.scene === 'greenhouse' ? '花房' : '菜地';
     const plots = describePlots(snapshot?.plots);
     const wallet = typeof snapshot?.coins === 'number' ? `钱包里有 ${snapshot.coins} 金币。` : '';
-    const guest = !!snapshot?.visit;
 
     return (
-        guest
-            ? '\n你现在在「小花园」的' + where + '上，这是你自己的院子，' + name + '过来串门了。沿用你原本的性格与和' + name + '的关系，只是场景换到了田埂边。'
-            : '\n你现在人就站在「小花园」的' + where + '上，' + name + '也在，你们一起伺候这片地。沿用你原本的性格与和' + name + '的关系，只是场景换到了田埂边。'
-        + (guest
-            ? '\n这是你自己的地，' + name + '是来陪你的：地里的活你说了算，种、浇、收都由你按时候来做，不用问他。'
-            : '\n手边就是这几块地，种、浇、收你都做得来，不用等' + name + '开口吩咐，看见该做的顺手就做。')
+        '\n你现在人就站在「小花园」的' + where + '上，' + name + '也在，你们一起伺候这片地。沿用你原本的性格与和' + name + '的关系，只是场景换到了田埂边。'
+        + '\n手边就是这几块地，种、浇、收你都做得来，不用等' + name + '开口吩咐，看见该做的顺手就做。'
         + '\n说话短、自然、口语化，像一边干活一边搭话；一般一两句就够，不要写长段落，不要旁白式心理描写，也不要复盘整段对话。'
         + '\n花园里的白猫是' + name + '，黑猫是你。你只能以自己的身份说话和做事，不能替' + name + '说话、不能编造' + name + '做过的动作。'
         + (plots ? '\n地里现在：' + plots + '。' : '')
@@ -113,7 +104,7 @@ export function parseGardenActions(raw: string): { text: string; actions: Garden
    每 8 小时角色自己巡一次园，事情是花园里真做的（patrol.js），
    这里只负责把那份报告写成一句人话，留给留言板、顺手同步到私聊。 */
 export interface PatrolStep {
-    kind: 'water' | 'harvest' | 'steal';
+    kind: 'water' | 'harvest';
     plot: number;
     crop?: string;
 }
@@ -124,12 +115,10 @@ export interface PatrolReport {
     name: string;
     summary: string;
     steps: PatrolStep[];
-    other: { id: string; name: string; steps: PatrolStep[] } | null;
 }
 
 function describePatrolStep(step: PatrolStep): string {
     if (step.kind === 'harvest') return `收了 ${step.plot} 号地的${step.crop || '菜'}`;
-    if (step.kind === 'steal') return `从别人家 ${step.plot} 号地摸走一颗`;
     return `给 ${step.plot} 号地浇了水`;
 }
 
@@ -143,14 +132,7 @@ export async function generatePatrolNote(args: {
     if (!api.baseUrl || !api.model) return '';
 
     const own = (report.steps || []).map(describePatrolStep);
-    const away = report.other
-        ? report.other.steps.map(step =>
-              step.kind === 'steal'
-                  ? `从${report.other!.name}家 ${step.plot} 号地摸走一颗`
-                  : `帮${report.other!.name}给 ${step.plot} 号地浇了水`
-          )
-        : [];
-    const deeds = [...own, ...away].join('；') || '什么也没做，只是看了看';
+    const deeds = own.join('；') || '什么也没做，只是看了看';
 
     const prompt =
         `你是${char.name}。刚刚在自己的小花园里转了一圈，顺手做了这些事：${deeds}。\n` +
