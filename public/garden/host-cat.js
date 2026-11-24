@@ -88,7 +88,8 @@
   var VEND = "vendor/live2d/";                 /* 这目录里现在只用得着 pixi.min.js */
   /* fourway20260912：四向走路帧包。改这儿的图要同步动 host-boot.js 的缓存串。 */
   var FW = "assets/cats-fourway-v1/";
-  var FW_V = "?v=stopframe0915-v1";
+  /* avatar1124：白猫＝使用者的女孩形象，黑猫＝王愿/AI 的男孩形象；只有正面，四向复用 */
+  var FW_V = "?v=avatar1124-v1";
   var WORLD_W = 1536, WORLD_H = 1024;          /* 世界坐标（app.js 的底图坐标系） */
   var PERSON_PCT = 15.5;                       /* 花园里走路小人的高＝场景高的 15.5% */
   var CAT_RATIO = 0.60;                        /* 猫 ≈ 人物基准高的 60% */
@@ -105,7 +106,7 @@
      一轮 5.17 秒，首尾接得上。格/挂点/画面顶跟走路帧包同口径，所以共用 FW_CELL 那套换算。
      改这儿的图要动 IDLE_V，别去动 FW_V —— 走路那八张横条没改，犯不上让人重下。 */
   var IDLE = "assets/cats-idle-v1/";
-  var IDLE_V = "?v=idle0915-v1";
+  var IDLE_V = "?v=avatar1124-v1";
   var IDLE_COLS = 8, IDLE_FRAMES = 62;
   var IDLE_MS = 1000 / 12;                     /* ＝83.33ms。源片 24fps，隔一帧取一帧 */
   /* 打盹时定在闭眼那一格（各自眨眼段里挑的，逐格目检）。
@@ -1934,7 +1935,7 @@
                                         走 teardown 的那条路上（pixi/帧图取不到）一颗钮都不留 */
 
       window.RainholmCats = {
-        version: "host-cat-20260913+cathome0913-v1+idle0915-v1+roofguard0915+walktune0917-v2+walksilk0918-v4+nogo0919-v3-groundfill-bedfoot-uidom+userwhite0918",
+        version: "host-cat-20260913+cathome0913-v1+idle0915-v1+roofguard0915+walktune0917-v2+walksilk0918-v4+nogo0919-v3-groundfill-bedfoot-uidom+userwhite0918+avatar1124-v1",
         mounted: true,
         cats: CATS,
         meow: meow,
