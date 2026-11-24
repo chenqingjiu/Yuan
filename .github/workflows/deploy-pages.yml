@@ -70,6 +70,26 @@ jobs:
           name: ${{ env.PAGES_ARTIFACT_NAME }}
           path: ./dist
 
+      # GitHub 的 artifact 上传与元数据索引是最终一致的：upload 返回成功后立刻
+      # 调 deploy-pages，常会在 API 里查到 0 个 artifact，于是报 "Found 0 artifact(s)"
+      # 并失败，尽管 artifact 几秒后就能查到。这里等它在 API 里真正可见再继续。
+      - name: Wait for artifact to become visible
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          name="${PAGES_ARTIFACT_NAME}"
+          for i in $(seq 1 30); do
+            count=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts" \
+              --jq "[.artifacts[] | select(.name == \"${name}\")] | length" 2>/dev/null || echo 0)
+            if [ "${count}" = "1" ]; then
+              echo "artifact 已可见（第 ${i} 次检查）"
+              exit 0
+            fi
+            echo "第 ${i} 次检查：artifact 还没索引到，等 5 秒…"
+            sleep 5
+          done
+          echo "artifact 始终不可见，交给 deploy-pages 自行报错"
+
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
