@@ -88,6 +88,9 @@ import {
     getSttProviderLabel,
 } from '../utils/speechToText';
 import { describeImageWithVisionApi, VISION_API_TEST_IMAGE_DATA_URL, visionApiConfigFromPreset } from '../utils/visionApi';
+import { describeVideoWithVideoApi, readVideoApiUsage } from '../utils/videoApi';
+import { getCustomVideoParseKey, setVideoParseKey } from '../utils/videoParser';
+import { createSampleVideoBlob } from '../utils/videoMessage';
 import {
     FIRECRAWL_API_KEYS_URL,
     getFirecrawlApiKey,
@@ -126,10 +129,27 @@ const HOTNEWS_PLATFORM_OPTIONS: { key: string; label: string }[] = [
 // 需要重新启用时只改为 true。
 const SHOW_FIRECRAWL_ARK_UI = false;
 const VISION_MODEL_LIST_STORAGE_KEY = 'os_vision_available_models';
+// 视频模型列表单独存一份：同一家供应商的视频模型和识图模型往往不同，混用会把列表冲掉。
+const VIDEO_MODEL_LIST_STORAGE_KEY = 'os_video_available_models';
+/** 内置视频模型候选：有的服务商 /models 不列视觉模型，给个兜底清单。 */
+const VIDEO_MODEL_FALLBACKS = [
+    'qwen3.7-plus',
+    'qwen3.6-flash',
+    'qwen-vl-max',
+    'glm-4.6v-flash',
+];
 
 const readStoredVisionModels = (): string[] => {
     try {
         return normalizeModelIds(JSON.parse(localStorage.getItem(VISION_MODEL_LIST_STORAGE_KEY) || '[]'));
+    } catch {
+        return [];
+    }
+};
+
+const readStoredVideoModels = (): string[] => {
+    try {
+        return normalizeModelIds(JSON.parse(localStorage.getItem(VIDEO_MODEL_LIST_STORAGE_KEY) || '[]'));
     } catch {
         return [];
     }
@@ -564,6 +584,27 @@ const Settings: React.FC = () => {
   const [localTemperature, setLocalTemperature] = useState<number>(
     typeof apiConfig.temperature === 'number' ? apiConfig.temperature : 0.85
   );
+  // 副 API（轻量任务：生图 prompt 生成、记忆归档、情绪评估等）
+  const [localSubKey, setLocalSubKey] = useState(apiConfig.subApiKey || '');
+  const [localSubUrl, setLocalSubUrl] = useState(apiConfig.subBaseUrl || '');
+  const [localSubModel, setLocalSubModel] = useState(apiConfig.subModel || 'gpt-4o-mini');
+  const [localSubStream, setLocalSubStream] = useState<boolean>(apiConfig.subStream === true);
+  const [showSubAdvanced, setShowSubAdvanced] = useState(false);
+  const [subModelList, setSubModelList] = useState<string[]>([]);
+  const [subFetchingModels, setSubFetchingModels] = useState(false);
+  const [subTesting, setSubTesting] = useState(false);
+  const [subTestResult, setSubTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [showSubModelModal, setShowSubModelModal] = useState(false);
+  const [subModelFilter, setSubModelFilter] = useState('');
+  const [subStatusMsg, setSubStatusMsg] = useState('');
+  const [subApiPresets, setSubApiPresets] = useState<Array<{ id: string; name: string; baseUrl: string; apiKey: string; model: string }>>(() => {
+    try {
+      const saved = localStorage.getItem('os_sub_api_presets');
+      return saved ? JSON.parse(saved) : [];
+    } catch { return []; }
+  });
+  const [showSubPresetModal, setShowSubPresetModal] = useState(false);
+  const [newSubPresetName, setNewSubPresetName] = useState('');
   const [localVisionEnabled, setLocalVisionEnabled] = useState(apiConfig.visionApi?.enabled === true);
   const [localVisionUrl, setLocalVisionUrl] = useState(apiConfig.visionApi?.baseUrl || '');
   const [localVisionKey, setLocalVisionKey] = useState(apiConfig.visionApi?.apiKey || '');
@@ -573,6 +614,19 @@ const Settings: React.FC = () => {
   const [visionStatusMsg, setVisionStatusMsg] = useState('');
   const [testingVisionApi, setTestingVisionApi] = useState(false);
   const [visionTestResult, setVisionTestResult] = useState<string | null>(null);
+  // 视频理解是独立槽位：与识图各存各的开关和凭据，切主 API 预设不会带走它。
+  const [localVideoEnabled, setLocalVideoEnabled] = useState(apiConfig.videoApi?.enabled === true);
+  const [localVideoUrl, setLocalVideoUrl] = useState(apiConfig.videoApi?.baseUrl || '');
+  const [localVideoKey, setLocalVideoKey] = useState(apiConfig.videoApi?.apiKey || '');
+  const [localVideoModel, setLocalVideoModel] = useState(apiConfig.videoApi?.model || '');
+  const [availableVideoModels, setAvailableVideoModels] = useState<string[]>(readStoredVideoModels);
+  const [videoModelFilter, setVideoModelFilter] = useState('');
+  const [showVideoModelModal, setShowVideoModelModal] = useState(false);
+  const [isLoadingVideoModels, setIsLoadingVideoModels] = useState(false);
+  const [videoStatusMsg, setVideoStatusMsg] = useState('');
+  const [testingVideoApi, setTestingVideoApi] = useState(false);
+  const [videoTestResult, setVideoTestResult] = useState<string | null>(null);
+  const [localVideoParseKey, setLocalVideoParseKey] = useState(getCustomVideoParseKey);
   const [localMiniMaxKey, setLocalMiniMaxKey] = useState(apiConfig.minimaxApiKey || '');
   const [localMiniMaxGroupId, setLocalMiniMaxGroupId] = useState(apiConfig.minimaxGroupId || '');
   const [localMiniMaxRegion, setLocalMiniMaxRegion] = useState<'domestic' | 'overseas'>(
@@ -945,6 +999,21 @@ const Settings: React.FC = () => {
       () => buildModelPickerView(availableVisionModels, visionModelFilter),
       [visionModelFilter, availableVisionModels],
   );
+  // 视频远程列表 + 内置推荐：远程优先，同名只留一份。
+  const videoModelCandidates = useMemo(() => {
+      const seen = new Set<string>();
+      const merged: string[] = [];
+      for (const model of [...availableVideoModels, ...VIDEO_MODEL_FALLBACKS]) {
+          if (!model || seen.has(model)) continue;
+          seen.add(model);
+          merged.push(model);
+      }
+      return merged;
+  }, [availableVideoModels]);
+  const videoModelPickerView = useMemo(
+      () => buildModelPickerView(videoModelCandidates, videoModelFilter),
+      [videoModelFilter, videoModelCandidates],
+  );
 
   // For web download link
   const [downloadUrl, setDownloadUrl] = useState<string>('');
@@ -1223,6 +1292,92 @@ const Settings: React.FC = () => {
     handleSaveApi(model);
   };
 
+  // ── 副 API（轻量任务）：独立于主 API 的保存/预设/测试 ──
+  const handleSaveSubApi = () => {
+    updateApiConfig({
+      subApiKey: localSubKey,
+      subBaseUrl: localSubUrl,
+      subModel: localSubModel,
+      subStream: localSubStream || undefined,
+    });
+    setSubStatusMsg('已保存');
+    setTimeout(() => setSubStatusMsg(''), 2000);
+  };
+  const saveSubApiPresets = (next: typeof subApiPresets) => {
+    setSubApiPresets(next);
+    localStorage.setItem('os_sub_api_presets', JSON.stringify(next));
+  };
+  const loadSubPreset = (preset: typeof subApiPresets[number]) => {
+    setLocalSubUrl(preset.baseUrl);
+    setLocalSubKey(preset.apiKey);
+    setLocalSubModel(preset.model);
+    addToast(`已加载副 API 预设: ${preset.name}`, 'info');
+  };
+  const handleSaveSubPreset = () => {
+    if (!newSubPresetName.trim()) {
+      addToast('请输入预设名称', 'error');
+      return;
+    }
+    if (!localSubUrl.trim() || !localSubKey.trim() || !localSubModel.trim()) {
+      addToast('请先填写副 API 的 URL、KEY、MODEL', 'error');
+      return;
+    }
+    saveSubApiPresets([
+      ...subApiPresets,
+      { id: Date.now().toString(), name: newSubPresetName.trim(), baseUrl: localSubUrl, apiKey: localSubKey, model: localSubModel },
+    ]);
+    setNewSubPresetName('');
+    setShowSubPresetModal(false);
+    addToast('副 API 预设已保存', 'success');
+  };
+  const removeSubPreset = (id: string) => {
+    saveSubApiPresets(subApiPresets.filter(p => p.id !== id));
+  };
+  const handleFetchSubModels = async () => {
+    if (!localSubUrl.trim() || !localSubKey.trim()) {
+      setSubTestResult({ success: false, message: '请先填写副 API 的 URL 和 KEY' });
+      setTimeout(() => setSubTestResult(null), 3000);
+      return;
+    }
+    setSubFetchingModels(true);
+    setSubTestResult(null);
+    try {
+      const baseUrl = localSubUrl.trim().replace(/\/+$/, '');
+      const res = await fetch(`${baseUrl}/models`, { headers: { 'Authorization': `Bearer ${localSubKey.trim()}` } });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      const models: string[] = (data?.data || []).map((m: any) => m.id || m.name).filter((s: any) => typeof s === 'string');
+      setSubModelList(models);
+      setSubTestResult({ success: true, message: `已拉取 ${models.length} 个模型` });
+      setTimeout(() => setSubTestResult(null), 3000);
+      if (models.length > 0) setShowSubModelModal(true);
+    } catch (e: any) {
+      setSubTestResult({ success: false, message: `拉取失败: ${e?.message || '未知错误'}` });
+      setTimeout(() => setSubTestResult(null), 3000);
+    }
+    setSubFetchingModels(false);
+  };
+  const handleTestSubConnection = async () => {
+    if (!localSubUrl.trim() || !localSubKey.trim()) {
+      setSubTestResult({ success: false, message: '请先填写副 API 的 URL 和 KEY' });
+      setTimeout(() => setSubTestResult(null), 3000);
+      return;
+    }
+    setSubTesting(true);
+    setSubTestResult(null);
+    try {
+      const baseUrl = localSubUrl.trim().replace(/\/+$/, '');
+      const res = await fetch(`${baseUrl}/models`, { headers: { 'Authorization': `Bearer ${localSubKey.trim()}` } });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setSubTestResult({ success: true, message: '连接成功' });
+      setTimeout(() => setSubTestResult(null), 3000);
+    } catch (e: any) {
+      setSubTestResult({ success: false, message: `连接失败: ${e?.message || '未知错误'}` });
+      setTimeout(() => setSubTestResult(null), 3000);
+    }
+    setSubTesting(false);
+  };
+
   const handleSaveVisionApi = (enabled = localVisionEnabled) => {
     const nextVisionApi = {
       enabled,
@@ -1333,6 +1488,121 @@ const Settings: React.FC = () => {
       trackEvent('测试识图 API', { result: '失败' });
     } finally {
       setTestingVisionApi(false);
+    }
+  };
+
+  // ── 视频理解 API（独立槽位）：先转文字再交主模型 ──
+  const fetchVideoModels = async () => {
+    const baseUrl = normalizeApiBaseUrl(localVideoUrl);
+    const apiKey = normalizeApiCredential(localVideoKey);
+    if (!baseUrl) { setVideoStatusMsg('请先填写视频 API 的 URL'); return; }
+    if (!apiKey) { setVideoStatusMsg('请先填写视频 API 的 Key 再拉取模型列表'); return; }
+    setIsLoadingVideoModels(true);
+    setVideoStatusMsg('正在拉取视频模型...');
+    setVideoTestResult(null);
+    try {
+      const response = await fetch(`${baseUrl}/models`, {
+        method: 'GET',
+        headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const models = extractModelIds(await safeResponseJson(response));
+      if (models.length > 0) {
+        setAvailableVideoModels(models);
+        try { localStorage.setItem(VIDEO_MODEL_LIST_STORAGE_KEY, JSON.stringify(models)); } catch { /* ignore */ }
+        if (!models.includes(normalizeApiModel(localVideoModel))) {
+          setLocalVideoModel(models[0]);
+        }
+        setVideoStatusMsg(`获取到 ${models.length} 个模型`);
+      } else {
+        setVideoStatusMsg('这个接口没返回可用模型，已列出内置推荐，可直接点选');
+      }
+      setVideoModelFilter('');
+      setShowVideoModelModal(true);
+    } catch (error: any) {
+      console.error('Fetch Video Models Error', error);
+      setVideoStatusMsg(`拉取失败${error?.message ? `（${error.message}）` : ''}，已列出内置推荐，可直接点选`);
+      setVideoModelFilter('');
+      setShowVideoModelModal(true);
+    } finally {
+      setIsLoadingVideoModels(false);
+    }
+  };
+
+  const handleSaveVideoApi = (enabled = localVideoEnabled) => {
+    const nextVideoApi = {
+      enabled,
+      baseUrl: normalizeApiBaseUrl(localVideoUrl),
+      apiKey: normalizeApiCredential(localVideoKey),
+      model: normalizeApiModel(localVideoModel),
+    };
+    if (nextVideoApi.enabled && (!nextVideoApi.baseUrl || !nextVideoApi.apiKey || !nextVideoApi.model)) {
+      addToast('开启视频 API 前，请填写完整的 URL、Key 和 Model', 'error');
+      return;
+    }
+    setLocalVideoUrl(nextVideoApi.baseUrl);
+    setLocalVideoKey(nextVideoApi.apiKey);
+    setLocalVideoModel(nextVideoApi.model);
+    updateApiConfig({ videoApi: nextVideoApi });
+    setVideoStatusMsg(nextVideoApi.enabled ? '视频 API 已接入' : '已关闭，角色看不到视频内容');
+    setTimeout(() => setVideoStatusMsg(''), 2200);
+  };
+
+  // 极数本源解析 Key 单独落盘，不写进 apiConfig：只是分享链接的解析额度。
+  const handleSaveVideoParseKey = () => {
+    setVideoParseKey(localVideoParseKey);
+    const saved = getCustomVideoParseKey();
+    setLocalVideoParseKey(saved);
+    setVideoStatusMsg(saved
+      ? '极数本源 Key 已保存，链接解析会用你自己的额度'
+      : '已清空，回落到项目内置共享 Key');
+    setTimeout(() => setVideoStatusMsg(''), 2600);
+  };
+
+  const handleToggleVideoApi = () => {
+    const enabled = !localVideoEnabled;
+    setLocalVideoEnabled(enabled);
+    if (!enabled) {
+      updateApiConfig({ videoApi: {
+        baseUrl: '', apiKey: '', model: '', ...apiConfig.videoApi, enabled: false,
+      } });
+      setVideoStatusMsg('已关闭，角色看不到视频内容');
+    } else if (normalizeApiBaseUrl(localVideoUrl) && normalizeApiCredential(localVideoKey) && normalizeApiModel(localVideoModel)) {
+      handleSaveVideoApi(true);
+    } else {
+      setVideoStatusMsg('请填写 URL、Key 和 Model，保存后接入');
+    }
+  };
+
+  const handleTestVideoApi = async () => {
+    const config = {
+      enabled: true,
+      baseUrl: normalizeApiBaseUrl(localVideoUrl),
+      apiKey: normalizeApiCredential(localVideoKey),
+      model: normalizeApiModel(localVideoModel),
+    };
+    if (!config.baseUrl || !config.apiKey || !config.model) {
+      setVideoTestResult('❌ 请先填写完整的 URL、Key 和 Model');
+      return;
+    }
+    setTestingVideoApi(true);
+    setVideoTestResult(null);
+    try {
+      // 测试必须发真视频：HTTP 200 证明不了它看没看懂画面。
+      const sample = await createSampleVideoBlob(2.5);
+      if (!sample) {
+        setVideoTestResult('❌ 当前环境生成不了测试视频（不支持 MediaRecorder）');
+        return;
+      }
+      const description = await describeVideoWithVideoApi(sample, config);
+      setVideoTestResult(`✅ 视频理解成功 — ${description.slice(0, 80)}`);
+      trackEvent('测试视频 API', { result: '成功' });
+    } catch (error: any) {
+      console.error('Test Video API Error', error);
+      setVideoTestResult(`❌ 视频理解失败：${error?.message || '未知错误'}`);
+      trackEvent('测试视频 API', { result: '失败' });
+    } finally {
+      setTestingVideoApi(false);
     }
   };
 
@@ -2691,6 +2961,172 @@ const Settings: React.FC = () => {
                     </div>
                 )}
             </div>
+
+                {/* 副 API 配置 — 轻量任务（生图 prompt、记忆归档、情绪评估等） */}
+                <div className="mt-5 pt-4 border-t border-slate-100">
+                    <div className="flex items-center justify-between mb-3 pl-1">
+                        <div className="flex items-center gap-2">
+                            <div className="p-1.5 bg-amber-100/50 rounded-lg text-amber-600">
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-3.5 h-3.5">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M17.25 6.75 22.5 12l-5.25 5.25m-10.5 0L1.5 12l5.25-5.25m7.5-3-4.5 16.5" />
+                                </svg>
+                            </div>
+                            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">副 API（轻量任务）</label>
+                        </div>
+                        <button
+                            onClick={() => setShowSubPresetModal(true)}
+                            className="text-[10px] bg-amber-50 text-amber-600 px-2.5 py-1 rounded-full font-bold shadow-sm active:scale-95 transition-transform"
+                        >
+                            保存为预设
+                        </button>
+                    </div>
+
+                    {/* 副 API 预设列表 */}
+                    {subApiPresets.length > 0 && (
+                        <div className="mb-3 pl-1">
+                            <label className="text-[10px] font-bold text-amber-500/80 uppercase tracking-widest mb-1.5 block">副 API 预设</label>
+                            <div className="flex gap-1.5 flex-wrap">
+                                {subApiPresets.map(preset => (
+                                    <div key={preset.id} className="flex items-center bg-amber-50/60 border border-amber-200/60 rounded-lg pl-2.5 pr-1 py-1">
+                                        <span onClick={() => loadSubPreset(preset)} className="text-[11px] font-medium text-amber-700 cursor-pointer hover:text-amber-900 mr-1.5">{preset.name}</span>
+                                        <button onClick={() => removeSubPreset(preset.id)} className="p-0.5 rounded-full text-amber-300 hover:bg-red-50 hover:text-red-400 transition-colors">
+                                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3"><path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z" /></svg>
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    <p className="text-[10px] text-slate-400 mb-3 leading-relaxed pl-1">
+                        副 API 用于轻量任务（如生图 prompt 生成、记忆归档、情绪评估等），建议使用便宜的小模型（gpt-4o-mini），与主聊天 API 分开。
+                    </p>
+
+                    <div className="space-y-2.5 pl-1">
+                        <div>
+                            <label className="text-[10px] text-slate-400 font-bold block mb-1 tracking-wider">URL</label>
+                            <input
+                                type="text"
+                                value={localSubUrl}
+                                onChange={e => setLocalSubUrl(e.target.value)}
+                                placeholder="https://你的中转站/v1"
+                                className="w-full h-9 rounded-xl bg-slate-50 border border-slate-200 px-3 text-xs text-slate-700 focus:outline-none focus:border-amber-300 focus:ring-2 focus:ring-amber-100 transition-all"
+                            />
+                        </div>
+                        <div>
+                            <label className="text-[10px] text-slate-400 font-bold block mb-1 tracking-wider">KEY</label>
+                            <input
+                                type="password"
+                                value={localSubKey}
+                                onChange={e => setLocalSubKey(e.target.value)}
+                                placeholder="sk-..."
+                                className="w-full h-9 rounded-xl bg-slate-50 border border-slate-200 px-3 text-xs text-slate-700 focus:outline-none focus:border-amber-300 focus:ring-2 focus:ring-amber-100 transition-all"
+                            />
+                        </div>
+                        <div>
+                            <label className="text-[10px] text-slate-400 font-bold block mb-1 tracking-wider">MODEL</label>
+                            <div className="flex items-center gap-2">
+                                <input
+                                    type="text"
+                                    value={localSubModel}
+                                    onChange={e => setLocalSubModel(e.target.value)}
+                                    placeholder="gpt-4o-mini"
+                                    className="flex-1 h-9 rounded-xl bg-slate-50 border border-slate-200 px-3 text-xs text-slate-700 focus:outline-none focus:border-amber-300 focus:ring-2 focus:ring-amber-100 transition-all"
+                                />
+                                <button
+                                    type="button"
+                                    onClick={handleFetchSubModels}
+                                    disabled={subFetchingModels}
+                                    className="h-9 px-3 rounded-xl bg-amber-50 text-amber-600 text-xs font-bold active:scale-95 transition-all hover:bg-amber-100 disabled:opacity-50 flex items-center gap-1"
+                                >
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className={`w-3.5 h-3.5 ${subFetchingModels ? 'animate-spin' : ''}`}>
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+                                    </svg>
+                                    <span>刷新模型</span>
+                                </button>
+                            </div>
+                            {subModelList.length > 0 && (
+                                <button
+                                    type="button"
+                                    onClick={() => setShowSubModelModal(true)}
+                                    className="mt-1.5 text-[10px] text-amber-500 hover:text-amber-600 font-medium"
+                                >
+                                    📋 已缓存 {subModelList.length} 个模型，点此重新选择
+                                </button>
+                            )}
+                        </div>
+                        {/* 高级（流式）— 默认折叠，灰色低调 */}
+                        <div className="pt-0.5">
+                            <button
+                                type="button"
+                                onClick={() => setShowSubAdvanced(v => !v)}
+                                className="text-[10px] text-slate-300 hover:text-slate-400 transition-colors flex items-center gap-1 pl-0.5 active:scale-95"
+                            >
+                                <span>高级（不建议修改）</span>
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className={`w-2.5 h-2.5 transition-transform ${showSubAdvanced ? 'rotate-180' : ''}`}>
+                                    <path fillRule="evenodd" d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" />
+                                </svg>
+                            </button>
+                            {showSubAdvanced && (
+                                <div className="mt-2 pl-2 border-l-2 border-slate-100 space-y-2 py-1.5">
+                                    <p className="text-[10px] text-slate-300 leading-relaxed">
+                                        默认即可。若番外/长任务在手机上容易失败，可打开流式（需你的中转站支持 stream；不支持时不影响）。
+                                    </p>
+                                    <div className="flex items-center justify-between">
+                                        <div>
+                                            <span className="text-[10px] text-slate-400">流式输出 (Stream)</span>
+                                            <p className="text-[9px] text-slate-300 mt-0.5">长生成更稳；接口不支持时自动回退</p>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={() => setLocalSubStream(v => !v)}
+                                            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${localSubStream ? 'bg-amber-400' : 'bg-slate-200'}`}
+                                        >
+                                            <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${localSubStream ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                        <button
+                            type="button"
+                            onClick={handleTestSubConnection}
+                            disabled={subTesting}
+                            className="w-full h-9 rounded-xl bg-amber-50 text-amber-600 text-xs font-bold active:scale-95 transition-all hover:bg-amber-100 disabled:opacity-50 flex items-center justify-center gap-1.5 mt-1"
+                        >
+                            {subTesting ? (
+                                <>
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3.5 h-3.5 animate-spin">
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+                                    </svg>
+                                    <span>测试中…</span>
+                                </>
+                            ) : subTestResult ? (
+                                subTestResult.success ? (
+                                    <span className="text-emerald-600">✓ {subTestResult.message}</span>
+                                ) : (
+                                    <span className="text-red-500">✗ {subTestResult.message}</span>
+                                )
+                            ) : (
+                                <>
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-3.5 h-3.5">
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+                                    </svg>
+                                    <span>测试连接</span>
+                                </>
+                            )}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={handleSaveSubApi}
+                            className="w-full h-9 rounded-xl text-white text-xs font-bold active:scale-95 transition-all shadow-sm mt-2"
+                            style={{ background: 'linear-gradient(135deg, #f59e0b, #d97706)' }}
+                        >
+                            {subStatusMsg || '保存副 API 配置'}
+                        </button>
+                    </div>
+                </div>
+
         </SettingsSection>
 
         {/* 独立识图 API：给不支持 image_url 的主模型补视觉能力；可手动从通用模型预设载入。 */}
@@ -2870,6 +3306,143 @@ const Settings: React.FC = () => {
                 <path fillRule="evenodd" d="M7.21 14.77a.75.75 0 0 1 .02-1.06L11.168 10 7.23 6.29a.75.75 0 1 1 1.04-1.08l4.5 4.25a.75.75 0 0 1 0 1.08l-4.5 4.25a.75.75 0 0 1-1.06-.02Z" clipRule="evenodd" />
             </svg>
         </button>
+
+        {/* 独立视频 API：主模型看不懂视频，这里先把视频转成文字。与识图各存各的槽位。 */}
+        <SettingsSection
+            title="视频 API"
+            badge={
+                <span className={`text-[9px] font-bold px-2 py-1 rounded-full ${
+                    apiConfig.videoApi?.enabled
+                        ? 'bg-sky-100 text-sky-600'
+                        : 'bg-slate-100 text-slate-400'
+                }`}>
+                    {apiConfig.videoApi?.enabled ? '已接入' : '未接入'}
+                </span>
+            }
+            icon={
+                <div className="p-2 bg-sky-100/60 rounded-xl text-sky-600">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="m15.75 10.5 4.72-4.72a.75.75 0 0 1 1.28.53v11.38a.75.75 0 0 1-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 0 0 2.25-2.25v-9a2.25 2.25 0 0 0-2.25-2.25h-9A2.25 2.25 0 0 0 2.25 7.5v9a2.25 2.25 0 0 0 2.25 2.25Z" />
+                    </svg>
+                </div>
+            }
+        >
+            <div className="space-y-4">
+                <div className="rounded-2xl border border-sky-100 bg-sky-50/60 p-3.5">
+                    <div className="flex items-center justify-between gap-3">
+                        <div>
+                            <div className="text-xs font-bold text-slate-600">接入独立视频 API</div>
+                            <p className="text-[10px] text-slate-400 mt-1 leading-relaxed">
+                                角色才能"看"到你发的视频画面和声音。
+                            </p>
+                        </div>
+                        <button
+                            type="button"
+                            role="switch"
+                            aria-checked={localVideoEnabled}
+                            onClick={handleToggleVideoApi}
+                            className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${localVideoEnabled ? 'bg-sky-500' : 'bg-slate-200'}`}
+                        >
+                            <span className={`inline-block h-5 w-5 rounded-full bg-white shadow transition-transform ${localVideoEnabled ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                        </button>
+                    </div>
+                </div>
+
+                <p className="text-[10px] text-slate-400 leading-relaxed px-1">
+                    开启后，每段聊天视频只会先交给这里的视觉模型识别一次，并把结果写成
+                    <span className="font-semibold text-sky-600"> [视频：模型看到的内容] </span>
+                    再发给主 API；之后聊天和重 roll 都直接复用，不会重复扣费。关闭时视频照常发送，只是角色看不到内容。
+                </p>
+
+                <div className={`space-y-3 transition-opacity ${localVideoEnabled ? 'opacity-100' : 'opacity-50'}`}>
+                    <div>
+                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">URL</label>
+                        <input
+                            type="text"
+                            value={localVideoUrl}
+                            onChange={event => { setLocalVideoUrl(event.target.value); setVideoTestResult(null); }}
+                            disabled={!localVideoEnabled}
+                            placeholder="https://open.bigmodel.cn/api/paas/v4"
+                            className="w-full bg-white/60 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all disabled:cursor-not-allowed"
+                        />
+                    </div>
+                    <div>
+                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 block pl-1">Key</label>
+                        <input
+                            type="password"
+                            value={localVideoKey}
+                            onChange={event => { setLocalVideoKey(event.target.value); setVideoTestResult(null); }}
+                            disabled={!localVideoEnabled}
+                            placeholder="sk-..."
+                            className="w-full bg-white/60 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:bg-white transition-all disabled:cursor-not-allowed"
+                        />
+                    </div>
+                    <div>
+                        <div className="flex justify-between items-center mb-1.5 pl-1">
+                            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Model</label>
+                            <button
+                                type="button"
+                                onClick={fetchVideoModels}
+                                disabled={!localVideoEnabled || isLoadingVideoModels}
+                                className="text-[10px] text-sky-600 font-bold disabled:text-slate-300"
+                            >
+                                {isLoadingVideoModels ? '拉取中...' : '刷新模型列表'}
+                            </button>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={() => setShowVideoModelModal(true)}
+                            disabled={!localVideoEnabled}
+                            title={localVideoModel || '选择或手动输入模型'}
+                            className="w-full bg-white/60 border border-slate-200/60 rounded-xl px-4 py-3 text-sm text-slate-700 flex justify-between items-center gap-2 active:bg-white transition-all shadow-sm disabled:cursor-not-allowed"
+                        >
+                            <span className="font-mono overflow-hidden whitespace-nowrap min-w-0 flex-1 text-left text-ellipsis">
+                                {localVideoModel || '选择或手动输入模型...'}
+                            </span>
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 text-slate-400 shrink-0"><path fillRule="evenodd" d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" /></svg>
+                        </button>
+                    </div>
+                </div>
+
+                <div className="flex items-center justify-between px-1 text-[10px] text-slate-400">
+                    <span>今日已用</span>
+                    <span className="font-mono text-slate-500">{readVideoApiUsage().count} 次</span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                    <button
+                        type="button"
+                        onClick={handleTestVideoApi}
+                        disabled={testingVideoApi || !localVideoEnabled || !localVideoUrl.trim() || !localVideoKey.trim() || !localVideoModel.trim()}
+                        className="py-3 rounded-2xl font-bold text-sky-600 border border-sky-200 bg-sky-50 active:scale-95 transition-all disabled:opacity-40"
+                    >
+                        {testingVideoApi ? '视频测试中…' : '🧪 测试视频'}
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => handleSaveVideoApi()}
+                        disabled={testingVideoApi}
+                        className="py-3 rounded-2xl font-bold text-white shadow-lg shadow-sky-500/20 bg-sky-500 active:scale-95 transition-all disabled:opacity-50"
+                    >
+                        保存视频 API
+                    </button>
+                </div>
+                {videoStatusMsg && (
+                    <div className="text-[11px] text-center text-sky-600 bg-sky-50 px-3 py-2 rounded-xl">{videoStatusMsg}</div>
+                )}
+                <p className="text-[9px] text-slate-300 px-1 leading-relaxed">
+                    测试会现场录一段 2.5 秒的紫色方块动画发给该模型，确认真能看懂画面，并消耗一次极小请求。
+                    智谱的地址填 https://open.bigmodel.cn/api/paas/v4，模型填 glm-4.6v-flash。
+                </p>
+                {videoTestResult && (
+                    <div className={`text-xs px-3 py-2 rounded-xl leading-relaxed ${
+                        videoTestResult.startsWith('✅') ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'
+                    }`}>
+                        {videoTestResult}
+                    </div>
+                )}
+            </div>
+        </SettingsSection>
 
         {/* 其他 API 区域 — 非 LLM 类（语音、写歌等），不会跟随预设切换 */}
         <SettingsSection
@@ -3814,6 +4387,171 @@ const Settings: React.FC = () => {
                                 {availableVisionModels.length === 0
                                     ? '列表为空，可手动输入或点击“刷新模型列表”拉取'
                                     : `没有匹配 "${visionModelFilter}" 的模型`}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        })()}
+      </Modal>
+
+      {/* 副 API 模型选择 Modal */}
+      <Modal isOpen={showSubModelModal} title="选择副 API 模型" onClose={() => setShowSubModelModal(false)}>
+          <div className="space-y-3 p-1">
+              <div className="flex gap-2">
+                  <input
+                      type="text"
+                      value={localSubModel}
+                      onChange={(e) => setLocalSubModel(e.target.value)}
+                      placeholder="手动输入模型名称..."
+                      className="flex-1 bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:outline-amber-300 focus:bg-white transition-all"
+                  />
+                  <button
+                      onClick={() => setShowSubModelModal(false)}
+                      className="px-4 py-2.5 text-white text-sm font-bold rounded-xl active:scale-95 transition-all"
+                      style={{ background: 'linear-gradient(135deg, #f59e0b, #d97706)' }}
+                  >
+                      确定
+                  </button>
+              </div>
+              {subModelList.length > 0 && (
+                  <div className="relative">
+                      <input
+                          type="text"
+                          value={subModelFilter}
+                          onChange={(e) => setSubModelFilter(e.target.value)}
+                          placeholder={`🔍 搜索 ${subModelList.length} 个模型...`}
+                          className="w-full bg-slate-50 border border-slate-200/60 rounded-xl px-4 py-2 text-xs focus:outline-amber-300 focus:bg-white transition-all"
+                      />
+                      {subModelFilter && (
+                          <button onClick={() => setSubModelFilter('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 text-xs px-2">×</button>
+                      )}
+                  </div>
+              )}
+              <div className="max-h-[40vh] overflow-y-auto no-scrollbar space-y-2">
+                  {subModelList.length === 0 ? (
+                      <div className="text-center text-xs text-slate-400 py-6">还没有模型列表。请先点"刷新模型"从中转站拉取。</div>
+                  ) : subModelList.filter(m => !subModelFilter || m.toLowerCase().includes(subModelFilter.toLowerCase())).length === 0 ? (
+                      <div className="text-center text-xs text-slate-400 py-6">没有匹配的模型</div>
+                  ) : (
+                      subModelList.filter(m => !subModelFilter || m.toLowerCase().includes(subModelFilter.toLowerCase())).map(m => {
+                          const selected = m === localSubModel;
+                          return (
+                              <button
+                                  key={m}
+                                  onClick={() => setLocalSubModel(m)}
+                                  className={`w-full text-left px-4 py-2.5 rounded-xl text-sm font-mono transition-all active:scale-[0.98] ${selected
+                                      ? 'text-white shadow-md'
+                                      : 'bg-slate-50 text-slate-700 hover:bg-amber-50 border border-slate-200/60'}`}
+                                  style={selected ? { background: 'linear-gradient(135deg, #f59e0b, #d97706)' } : {}}
+                              >
+                                  <div className="flex items-center justify-between">
+                                      <span className="truncate">{m}</span>
+                                      {selected && <span className="text-xs">✓</span>}
+                                  </div>
+                              </button>
+                          );
+                      })
+                  )}
+              </div>
+          </div>
+      </Modal>
+
+      {/* 副 API 预设 Modal */}
+      <Modal isOpen={showSubPresetModal} title="保存副 API 预设" onClose={() => setShowSubPresetModal(false)} footer={<button onClick={handleSaveSubPreset} className="w-full py-3 bg-amber-500 text-white font-bold rounded-2xl">保存</button>}>
+          <div className="space-y-2">
+              <label className="text-[10px] font-bold text-slate-400 uppercase">预设名称 (例如: GPT-4o-mini 备用)</label>
+              <input
+                  value={newSubPresetName}
+                  onChange={e => setNewSubPresetName(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleSaveSubPreset()}
+                  className="w-full bg-slate-100 rounded-xl px-4 py-3 text-sm focus:outline-amber-300"
+                  autoFocus
+                  placeholder="Name..."
+              />
+              <p className="text-[10px] text-slate-400">将保存当前填写的副 API URL、KEY、MODEL。点预设名可一键切换。</p>
+          </div>
+      </Modal>
+
+      {/* 视频模型列表与识图分开存：同一家供应商的视频/识图模型往往不是同一批。 */}
+      <Modal isOpen={showVideoModelModal} title="选择视频模型" onClose={() => setShowVideoModelModal(false)}>
+        {(() => {
+            const { filtered, commonPrefix } = videoModelPickerView;
+            return (
+                <div className="space-y-3 p-1">
+                    <div className="flex gap-2">
+                        <input
+                            type="text"
+                            value={localVideoModel}
+                            onChange={(event) => { setLocalVideoModel(event.target.value); setVideoTestResult(null); }}
+                            placeholder="手动输入视频模型名称..."
+                            className="flex-1 min-w-0 bg-white/50 border border-slate-200/60 rounded-xl px-4 py-2.5 text-sm font-mono focus:outline-sky-500 focus:bg-white transition-all"
+                        />
+                        <button
+                            onClick={() => setShowVideoModelModal(false)}
+                            className="px-4 py-2.5 bg-sky-500 text-white text-sm font-bold rounded-xl active:scale-95 transition-all"
+                        >
+                            确定
+                        </button>
+                    </div>
+                    {availableVideoModels.length === 0 && (
+                        <div className="text-[10px] text-sky-600 bg-sky-50 px-3 py-2 rounded-xl leading-relaxed">
+                            下面是内置推荐（通义 Qwen-VL 系列 / 智谱 GLM-V）。点「刷新模型列表」可以从服务商拉全量再并进来。
+                        </div>
+                    )}
+                    {videoModelCandidates.length > 0 && (
+                        <div className="relative">
+                            <input
+                                type="text"
+                                value={videoModelFilter}
+                                onChange={(event) => setVideoModelFilter(event.target.value)}
+                                placeholder={`🔍 搜索 ${videoModelCandidates.length} 个视频模型...`}
+                                className="w-full bg-slate-50 border border-slate-200/60 rounded-xl px-4 py-2 text-xs focus:outline-sky-500 focus:bg-white transition-all"
+                            />
+                            {videoModelFilter && (
+                                <button
+                                    onClick={() => setVideoModelFilter('')}
+                                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 text-xs px-2"
+                                >×</button>
+                            )}
+                        </div>
+                    )}
+                    {commonPrefix && (
+                        <div className="text-[10px] text-slate-400 px-1 flex items-center gap-1 flex-wrap">
+                            <span>共同前缀:</span>
+                            <code className="font-mono bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded break-all">{commonPrefix}</code>
+                            <span className="text-slate-300">(下方已弱化显示)</span>
+                        </div>
+                    )}
+                    <div className="max-h-[40vh] overflow-y-auto no-scrollbar space-y-2">
+                        {filtered.length > 0 ? filtered.map(model => {
+                            const suffix = commonPrefix && model.startsWith(commonPrefix) ? model.slice(commonPrefix.length) : model;
+                            const selected = model === localVideoModel;
+                            return (
+                                <button
+                                    key={model}
+                                    onClick={() => {
+                                        setLocalVideoModel(model);
+                                        setVideoTestResult(null);
+                                        setShowVideoModelModal(false);
+                                    }}
+                                    title={model}
+                                    className={`w-full text-left px-4 py-3 rounded-xl text-sm font-mono flex justify-between items-start gap-2 ${selected ? 'bg-sky-100 text-sky-700 font-bold ring-1 ring-sky-200' : 'bg-slate-50 text-slate-600 hover:bg-slate-100'}`}
+                                >
+                                    <span className="break-all min-w-0 flex-1 leading-relaxed">
+                                        {commonPrefix && suffix !== model && (
+                                            <span className={selected ? 'text-sky-400 font-normal' : 'text-slate-400 font-normal'}>{commonPrefix}</span>
+                                        )}
+                                        <span>{suffix}</span>
+                                    </span>
+                                    {selected && <div className="w-2 h-2 rounded-full bg-sky-500 mt-1.5 shrink-0" />}
+                                </button>
+                            );
+                        }) : (
+                            <div className="text-center text-slate-400 py-8 text-xs">
+                                {videoModelFilter
+                                    ? `没有匹配 "${videoModelFilter}" 的模型，可在上方直接手填`
+                                    : '列表为空，可在上方直接手填模型名'}
                             </div>
                         )}
                     </div>
