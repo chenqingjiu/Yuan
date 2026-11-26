@@ -109,7 +109,7 @@ export function parseGardenActions(raw: string): { text: string; actions: Garden
    每 8 小时角色自己巡一次园，事情是花园里真做的（patrol.js），
    这里只负责把那份报告写成一句人话，留给留言板、顺手同步到私聊。 */
 export interface PatrolStep {
-    kind: 'water' | 'harvest';
+    kind: 'plant' | 'water' | 'harvest';
     plot: number;
     crop?: string;
 }
@@ -123,6 +123,7 @@ export interface PatrolReport {
 }
 
 function describePatrolStep(step: PatrolStep): string {
+    if (step.kind === 'plant') return `在 ${step.plot} 号地种下了${step.crop || '种子'}`;
     if (step.kind === 'harvest') return `收了 ${step.plot} 号地的${step.crop || '菜'}`;
     return `给 ${step.plot} 号地浇了水`;
 }

@@ -15,7 +15,8 @@ import {
     gardenView,
     harvest,
     water,
-} from "./garden.browser.js?v=single1124-v1";
+    plant,
+} from "./garden.browser.js?v=patrol1126-v1";
 
 const PATROL_MS = 8 * 60 * 60 * 1000;
 const NOTE_TIMEOUT = 9000;
@@ -51,11 +52,13 @@ function readInfo() {
 
 /** 把动作说成人话，喂给 AI 和兜底文案共用。 */
 function describeOwn(steps) {
+    const plants = steps.filter((s) => s.kind === "plant").map((s) => s.plot);
     const waterIds = steps.filter((s) => s.kind === "water").map((s) => s.plot);
     const harvests = steps.filter((s) => s.kind === "harvest");
     const parts = [];
-    if (harvests.length) parts.push("收了 " + harvests.map((s) => s.plot + " 号地的" + (s.crop || "菜")).join("、"));
+    if (plants.length) parts.push("在 " + plants.join("、") + " 号地种下了种子");
     if (waterIds.length) parts.push("给 " + waterIds.join("、") + " 号地浇了水");
+    if (harvests.length) parts.push("收了 " + harvests.map((s) => s.plot + " 号地的" + (s.crop || "菜")).join("、"));
     return parts.join("，");
 }
 
@@ -88,11 +91,25 @@ function askHost(report) {
     });
 }
 
-/** 自己的院子：熟了就收，缺水的浇一次。 */
+/** 自己的院子：空地顺手种几颗，没熟的浇一次，熟了就收。 */
 function patrolOwn(record, name, now, steps) {
     advance(record.farm, now);
     const view = gardenView(record, now);
     const plots = view.plots || [];
+
+    /* 一轮最多种 3 块，且手里留出两颗普通种子的钱（16 金币），别把周转钱花光 */
+    const SEED_PRICE = 8;
+    let plantQuota = 3;
+    for (const plot of record.farm.plots) {
+        if (plantQuota > 0 && !plot.crop && record.farm.coins >= SEED_PRICE * 2 + 1) {
+            const result = plant(record.farm, plot.id, "common", void 0, now);
+            if (result.ok) {
+                steps.push({ kind: "plant", plot: plot.id, crop: "普通种子" });
+                plantQuota -= 1;
+            }
+        }
+    }
+
     for (const plot of record.farm.plots) {
         if (!plot.crop) continue;
         if (plot.crop.ripe) {
@@ -100,8 +117,11 @@ function patrolOwn(record, name, now, steps) {
             if (result.ok) steps.push({ kind: "harvest", plot: plot.id, crop: result.crop?.name || "" });
             continue;
         }
+        /* 8 小时才补算一轮，作物早过浇水窗口了；只要还能浇（没浇满）就补一次，
+           不只看 needsWater，否则巡检永远只收不浇。刚种下的这轮也一起浇。 */
         const seen = plots.find((item) => item.id === plot.id);
-        if (!seen?.needsWater) continue;
+        const canWater = seen?.canWater ?? (!plot.crop.ripe && (plot.crop.waterCount || 0) < 6);
+        if (!canWater) continue;
         water(record.farm, plot.id, name, true);
         steps.push({ kind: "water", plot: plot.id });
     }

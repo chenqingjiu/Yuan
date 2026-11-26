@@ -77,6 +77,8 @@ export default function GardenApp({ onBack }: { onBack: () => void }) {
                     await saveGardenBoardMessage(char.id, `「小花园 · 留言板」${line}`, {
                         patrolId: report.id,
                         patrolBy: char.id,
+                        /* 巡检动作明细随留言一起进私聊，卡片里展示种/浇/收，历史消息没有也不影响 */
+                        steps: report.steps || [],
                     }).catch(() => 0);
                 })();
                 return;

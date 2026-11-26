@@ -6,7 +6,7 @@ import {
     ensureScenes,
     newRecord,
 } from "./garden.browser.js?v=single1124-v1";
-import { startPatrol } from "./patrol.js?v=single1124-v1";
+import { startPatrol } from "./patrol.js?v=patrol1126-v1";
 
 /* 兜底：局域网 http 访问时 crypto.randomUUID 可能不存在（非安全上下文），
    而 app.js 拿它当幂等号，缺了会直接种不了地。 */

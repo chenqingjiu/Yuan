@@ -2567,6 +2567,61 @@ const MessageItem = React.memo(({
         );
     }
 
+    // ── 小花园 · 巡园留言卡片 ──
+    // 花园巡检/聊天同步回私聊的留言（metadata.source='garden' && gardenBoard），
+    // 像「彼方活动室」一样渲染成一张独立的花园主题卡片，不再走普通白色气泡。
+    // 注意：只改渲染层，落库仍是 type='text'、role='assistant'，私聊同步和记忆库不受影响。
+    if (m.metadata?.source === 'garden' && (m.metadata as any)?.gardenBoard) {
+        const md: any = m.metadata || {};
+        const timeStr = new Date(m.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+        // 落库正文带「小花园 · 留言板」前缀，卡片里已有标题，这里剥掉避免重复
+        const boardText = String(m.content || '').replace(/^\s*[「『]?\s*小花园\s*[·・]\s*留言板\s*[」』]?\s*/, '').trim();
+        const steps: any[] = Array.isArray(md.steps) ? md.steps : [];
+        const stepText = steps.map((s: any) => {
+            if (s?.kind === 'plant') return `🌱 在 ${s.plot} 号地种下${s.crop || '种子'}`;
+            if (s?.kind === 'water') return `💧 给 ${s.plot} 号地浇了水`;
+            if (s?.kind === 'harvest') return `🧺 收了 ${s.plot} 号地的${s.crop || '菜'}`;
+            return null;
+        }).filter((t): t is string => !!t);
+        const card = (
+            <div className="w-64 max-w-[82vw]">
+                <div
+                    className="relative overflow-hidden rounded-2xl border shadow-[0_6px_20px_rgba(150,80,110,0.22)]"
+                    style={{ borderColor: 'rgba(214,123,138,0.45)', background: 'linear-gradient(155deg,#fff6f7 0%,#ffeef1 55%,#fff7f4 100%)' }}
+                >
+                    {/* 顶部粉格底纹 */}
+                    <div className="absolute inset-0 pointer-events-none opacity-60" style={{ backgroundImage: 'repeating-linear-gradient(135deg,rgba(255,190,205,.18) 0 12px,transparent 12px 24px)' }} />
+                    {/* 标题栏 */}
+                    <div className="relative px-3.5 pt-2.5 pb-2 flex items-center gap-2 border-b-2 border-dotted" style={{ borderColor: '#f6d6da', background: 'linear-gradient(90deg,#fff0f2,#fff9f7)' }}>
+                        <span className="text-base leading-none" style={{ filter: 'drop-shadow(0 1px 1px rgba(214,123,138,.35))' }}>🌸</span>
+                        <div className="flex-1 min-w-0">
+                            <div className="text-[9px] tracking-[0.2em] font-bold" style={{ color: '#b05a6e' }}>小花园 · 巡园留言</div>
+                            <div className="text-[11px] font-semibold truncate" style={{ color: '#8a4f60' }}>{charName || 'Ta'} 的花园手记</div>
+                        </div>
+                        <span className="text-[9px]" style={{ color: '#c98b98' }}>{timeStr}</span>
+                    </div>
+                    {/* 正文：便签体 */}
+                    <div className="relative px-3.5 py-3">
+                        <p className="text-[12.5px] leading-[1.65] whitespace-pre-wrap break-words" style={{ color: '#5e4550', fontFamily: "'Noto Serif SC',serif" }}>{boardText}</p>
+                        {stepText.length > 0 && (
+                            <div className="mt-2.5 pt-2 space-y-1 border-t border-dashed" style={{ borderColor: '#f6d6da' }}>
+                                {stepText.map((t: string, i: number) => (
+                                    <div key={i} className="text-[11px] leading-snug" style={{ color: '#a9647a' }}>{t}</div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                    {/* 页脚 */}
+                    <div className="relative px-3.5 py-1.5 border-t-2 border-dotted flex items-center justify-between" style={{ borderColor: '#f6d6da', background: 'linear-gradient(#fff9f7,#fff2f4)' }}>
+                        <span className="text-[9px] italic" style={{ color: '#bf93a0' }}>巡园手记</span>
+                        <span className="text-[9px] font-bold tracking-wide" style={{ color: '#c25670' }}>已同步私聊</span>
+                    </div>
+                </div>
+            </div>
+        );
+        return commonLayout(card);
+    }
+
     if (m.type === 'vr_card') {
         const md: any = m.metadata || {};
         const roomNameMap: Record<string, string> = {
