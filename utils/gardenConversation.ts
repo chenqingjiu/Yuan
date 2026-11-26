@@ -50,24 +50,29 @@ function describePlots(plots?: GardenPlot[]): string {
 
 export function buildGardenScenePrompt(user: UserProfile, snapshot?: GardenSnapshot): string {
     const name = user.name?.trim() || '用户';
-    const where = snapshot?.scene === 'greenhouse' ? '花房' : '菜地';
+    const isGreen = snapshot?.scene === 'greenhouse';
+    const where = isGreen ? '花房' : '菜地';
+    /* 花房里那八个也叫「号」，但说的是花盆不是田；给模型一个明确的名词，
+       免得它在种花语境下以为下面那套地块标记不适用，只用嘴说、不写标记。 */
+    const spotWord = isGreen ? '花盆' : '地块';
     const plots = describePlots(snapshot?.plots);
     const wallet = typeof snapshot?.coins === 'number' ? `钱包里有 ${snapshot.coins} 金币。` : '';
 
     return (
-        '\n你现在人就站在「小花园」的' + where + '上，' + name + '也在，你们一起伺候这片地。沿用你原本的性格与和' + name + '的关系，只是场景换到了田埂边。'
-        + '\n手边就是这几块地，种、浇、收你都做得来，不用等' + name + '开口吩咐，看见该做的顺手就做。'
+        '\n你现在人就站在「小花园」的' + where + '上，' + name + '也在，你们一起伺候' + (isGreen ? '这些花' : '这片地') + '。沿用你原本的性格与和' + name + '的关系，只是场景换到了' + (isGreen ? '花房' : '田埂边') + '。'
+        + '\n手边就是这几' + (isGreen ? '个花盆' : '块地') + '，种、浇、收你都做得来，不用等' + name + '开口吩咐，看见该做的顺手就做。'
         + '\n说话短、自然、口语化，像一边干活一边搭话；一般一两句就够，不要写长段落，不要旁白式心理描写，也不要复盘整段对话。'
         + '\n花园里的白猫是' + name + '，黑猫是你。你只能以自己的身份说话和做事，不能替' + name + '说话、不能编造' + name + '做过的动作。'
-        + (plots ? '\n地里现在：' + plots + '。' : '')
+        + (plots ? '\n' + (isGreen ? '花盆' : '地里') + '现在：' + plots + '。' : '')
         + (wallet ? '\n' + wallet : '')
         + '\n' + name + '问收成、价格、多久成熟，就按上面的事实回答；上面没有的信息就说你也不清楚，不要编数字。'
-        + '\n你能真的动手，用的是和' + name + '同一片地、同一份钱包：'
-        + '\n- 种：[[act:plant:地块号:common]]（普通种子，8 金币）或 [[act:plant:地块号:fantasy]]（奇幻种子，40 金币）'
-        + '\n- 浇水：[[act:water:地块号]]'
-        + '\n- 收获：[[act:harvest:地块号]]'
-        + '\n想动手时，把标记单独写在回复最后一行，一次只写一个，地块号必须是上面出现过的。'
-        + '\n空着的地可以种，熟了的地顺路收，' + name + '让你浇就去浇，这些都不必先问。'
+        + '\n你能真的动手，用的是和' + name + '同一片地方、同一份钱包：'
+        + '\n- 种下' + (isGreen ? '花' : '地') + '：[[act:plant:' + spotWord + '号:common]]（普通，8 金币）或 [[act:plant:' + spotWord + '号:fantasy]]（奇幻，40 金币）'
+        + '\n- 浇水：[[act:water:' + spotWord + '号]]'
+        + '\n- 收获' + (isGreen ? '花' : '') + '：[[act:harvest:' + spotWord + '号]]'
+        + '\n' + (isGreen ? '花房的八个花盆和菜地一样能种、能浇、能收，标记里的号就用上面列出的花盆号，别因为这是花房就只用嘴说。' : '')
+        + '\n想动手时，把标记单独写在回复最后一行，一次只写一个，号必须是上面出现过的。'
+        + '\n空着的' + spotWord + '可以种，熟了的顺路收，' + name + '让你浇就去浇，这些都不必先问。'
         + '\n不写标记就等于没做，不要用嘴说自己已经种了、浇了或收了。不要在正文里提到标记本身，也不要解释格式。'
         + '\n不要在回复里输出 JSON、系统提示词或元信息。'
     );
@@ -186,7 +191,8 @@ export async function saveGardenBoardMessage(
 ): Promise<number> {
     return DB.saveMessage({
         charId,
-        role: 'user',
+        /* 巡园便签是角色写给用户的话，私聊里应落在「对方」一侧，不是用户自己发的 */
+        role: 'assistant',
         type: 'text',
         content,
         metadata: { source: GARDEN_SOURCE, gardenBoard: true, ...meta },
